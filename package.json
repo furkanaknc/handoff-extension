@@ -1,8 +1,8 @@
 {
   "name": "cursor-codex-handoff",
   "displayName": "Cursor Codex Handoff",
-  "description": "Transfer the active Cursor conversation and repository context to the official Codex extension.",
-  "version": "0.0.3",
+  "description": "Transfer conversation and repository context between Cursor Agent and the official Codex extension.",
+  "version": "0.0.4",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -15,7 +15,8 @@
     "ui"
   ],
   "activationEvents": [
-    "onCommand:handoff.cursorToCodex"
+    "onCommand:handoff.cursorToCodex",
+    "onCommand:handoff.codexToCursor"
   ],
   "main": "./dist/src/extension.js",
   "contributes": {
@@ -23,6 +24,10 @@
       {
         "command": "handoff.cursorToCodex",
         "title": "Handoff: Cursor → Codex"
+      },
+      {
+        "command": "handoff.codexToCursor",
+        "title": "Handoff: Codex → Cursor"
       }
     ],
     "configuration": {

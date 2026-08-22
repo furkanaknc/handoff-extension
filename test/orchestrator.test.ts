@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { performCursorToCodexHandoff } from "../src/handoff/orchestrator";
+import {
+  performCodexToCursorHandoff,
+  performCursorToCodexHandoff,
+} from "../src/handoff/orchestrator";
 import type {
   CodexTarget,
   CursorConversationSource,
@@ -39,6 +42,31 @@ test("builds structured context and sends it to the target", async () => {
 
   assert.equal(result.source, "cursor");
   assert.equal(result.metadata.createdAt, "2026-08-22T12:00:00.000Z");
+  assert.deepEqual(received, result);
+});
+
+test("builds Codex context and sends it to the Cursor target", async () => {
+  let received: HandoffContext | undefined;
+  const result = await performCodexToCursorHandoff(
+    "C:\\work\\sample",
+    {
+      async getCurrentConversation() {
+        return {
+          id: "codex-thread",
+          truncated: false,
+          messages: [{ role: "assistant", content: "Codex result." }],
+        };
+      },
+    },
+    {
+      async sendHandoff(context) {
+        received = context;
+      },
+    },
+    async () => ({ changedFiles: [], diffTruncated: false }),
+    () => new Date("2026-08-22T13:00:00.000Z"),
+  );
+  assert.equal(result.source, "codex");
   assert.deepEqual(received, result);
 });
 

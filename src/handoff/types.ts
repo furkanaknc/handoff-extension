@@ -34,6 +34,14 @@ export interface CursorConversationSource {
   getCurrentConversation(workspacePath: string): Promise<Conversation>;
 }
 
+export interface CodexConversationSource {
+  getCurrentConversation(workspacePath: string): Promise<Conversation>;
+}
+
 export interface CodexTarget {
+  sendHandoff(context: HandoffContext): Promise<void>;
+}
+
+export interface CursorTarget {
   sendHandoff(context: HandoffContext): Promise<void>;
 }

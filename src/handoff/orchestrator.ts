@@ -1,6 +1,8 @@
 import type {
+  CodexConversationSource,
   CodexTarget,
   CursorConversationSource,
+  CursorTarget,
   GitContext,
   HandoffContext,
 } from "./types";
@@ -23,6 +25,30 @@ export async function performCursorToCodexHandoff(
 
   const context: HandoffContext = {
     source: "cursor",
+    workspacePath,
+    conversation,
+    repository,
+    metadata: { createdAt: now().toISOString() },
+  };
+
+  await target.sendHandoff(context);
+  return context;
+}
+
+export async function performCodexToCursorHandoff(
+  workspacePath: string,
+  source: CodexConversationSource,
+  target: CursorTarget,
+  getRepositoryContext: GitContextProvider,
+  now: () => Date = () => new Date(),
+): Promise<HandoffContext> {
+  const [conversation, repository] = await Promise.all([
+    source.getCurrentConversation(workspacePath),
+    getRepositoryContext(workspacePath),
+  ]);
+
+  const context: HandoffContext = {
+    source: "codex",
     workspacePath,
     conversation,
     repository,

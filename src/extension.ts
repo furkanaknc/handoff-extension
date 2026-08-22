@@ -1,11 +1,16 @@
 import path from "node:path";
 import * as vscode from "vscode";
 import { OfficialCodexTarget } from "./codex/codexTarget";
+import { OfficialCodexConversationSource } from "./codex/conversationSource";
 import { HookCursorConversationSource } from "./cursor/conversationSource";
+import { OfficialCursorTarget } from "./cursor/cursorTarget";
 import { ensureCursorHookInstalled } from "./cursor/hookInstaller";
 import { HandoffError } from "./handoff/errors";
 import { getGitContext } from "./handoff/gitContext";
-import { performCursorToCodexHandoff } from "./handoff/orchestrator";
+import {
+  performCodexToCursorHandoff,
+  performCursorToCodexHandoff,
+} from "./handoff/orchestrator";
 
 function activeWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
   const activeUri = vscode.window.activeTextEditor?.document.uri;
@@ -44,7 +49,7 @@ function userFacingError(error: unknown): string {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  const disposable = vscode.commands.registerCommand(
+  const cursorToCodex = vscode.commands.registerCommand(
     "handoff.cursorToCodex",
     async () => {
       const workspaceFolder = activeWorkspaceFolder();
@@ -112,7 +117,60 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   );
 
-  context.subscriptions.push(disposable);
+  const codexToCursor = vscode.commands.registerCommand(
+    "handoff.codexToCursor",
+    async () => {
+      const workspaceFolder = activeWorkspaceFolder();
+      if (!workspaceFolder) {
+        await vscode.window.showErrorMessage(
+          "No active workspace is open. Open a folder before handing off to Cursor.",
+        );
+        return;
+      }
+
+      try {
+        const source = new OfficialCodexConversationSource({
+          maxMessages: positiveIntegerSetting("maxConversationMessages", 200),
+          maxCharacters: positiveIntegerSetting(
+            "maxConversationCharacters",
+            200_000,
+          ),
+        });
+        const target = new OfficialCursorTarget(context.globalStorageUri);
+        const maxDiffBytes = nonNegativeIntegerSetting(
+          "maxDiffBytes",
+          100 * 1024,
+        );
+
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: "Preparing Codex → Cursor handoff",
+            cancellable: false,
+          },
+          () =>
+            performCodexToCursorHandoff(
+              workspaceFolder.uri.fsPath,
+              source,
+              target,
+              (workspacePath) => getGitContext(workspacePath, maxDiffBytes),
+            ),
+        );
+
+        await vscode.window.showInformationMessage(
+          "Codex handoff was prepared for the selected Cursor conversation.",
+        );
+      } catch (error) {
+        console.error("Codex Cursor Handoff failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorCode: error instanceof HandoffError ? error.code : undefined,
+        });
+        await vscode.window.showErrorMessage(userFacingError(error));
+      }
+    },
+  );
+
+  context.subscriptions.push(cursorToCodex, codexToCursor);
 }
 
 export function deactivate(): void {}

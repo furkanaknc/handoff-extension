@@ -53,3 +53,9 @@ test("renders a useful message when Git is unavailable", () => {
   );
   assert.match(markdown, /Git repository not detected/);
 });
+
+test("renders Codex source titles and assistant labels", () => {
+  const markdown = renderHandoffMarkdown(context({ source: "codex" }));
+  assert.match(markdown, /^# Handoff from Codex/m);
+  assert.match(markdown, /### Codex\n\nImplemented rotation\./);
+});

@@ -6,13 +6,20 @@ function codeFence(content: string): string {
   return "`".repeat(Math.max(3, longest + 1));
 }
 
-function labelForRole(role: "user" | "assistant"): string {
-  return role === "user" ? "User" : "Cursor";
+function sourceLabel(source: HandoffContext["source"]): "Cursor" | "Codex" {
+  return source === "cursor" ? "Cursor" : "Codex";
+}
+
+function labelForRole(
+  role: "user" | "assistant",
+  source: HandoffContext["source"],
+): string {
+  return role === "user" ? "User" : sourceLabel(source);
 }
 
 export function renderHandoffMarkdown(context: HandoffContext): string {
   const lines: string[] = [
-    "# Handoff from Cursor",
+    `# Handoff from ${sourceLabel(context.source)}`,
     "",
     `Workspace: \`${context.workspacePath}\``,
     `Created: ${context.metadata.createdAt}`,
@@ -35,7 +42,12 @@ export function renderHandoffMarkdown(context: HandoffContext): string {
       );
     }
     for (const message of conversation.messages) {
-      lines.push(`### ${labelForRole(message.role)}`, "", message.content, "");
+      lines.push(
+        `### ${labelForRole(message.role, context.source)}`,
+        "",
+        message.content,
+        "",
+      );
     }
   }
 
