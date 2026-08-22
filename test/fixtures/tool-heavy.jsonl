@@ -1,0 +1,4 @@
+{"role":"user","message":{"content":[{"type":"text","text":"Inspect auth."}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"I will inspect the service."},{"type":"tool_use","name":"read_file","input":{"path":"auth.ts"}}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"shell","input":{"command":"npm test"}}]}}
+{"role":"assistant","message":{"content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"Token rotation needs an atomic update."}]}}

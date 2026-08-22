@@ -1,0 +1,63 @@
+{
+  "name": "cursor-codex-handoff",
+  "displayName": "Cursor Codex Handoff",
+  "description": "Transfer the active Cursor conversation and repository context to the official Codex extension.",
+  "version": "0.0.3",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onCommand:handoff.cursorToCodex"
+  ],
+  "main": "./dist/src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "handoff.cursorToCodex",
+        "title": "Handoff: Cursor → Codex"
+      }
+    ],
+    "configuration": {
+      "title": "Cursor Codex Handoff",
+      "properties": {
+        "handoff.maxConversationMessages": {
+          "type": "number",
+          "default": 200,
+          "minimum": 1,
+          "description": "Maximum number of recent visible conversation messages included in a handoff."
+        },
+        "handoff.maxConversationCharacters": {
+          "type": "number",
+          "default": 200000,
+          "minimum": 1000,
+          "description": "Maximum number of recent visible conversation characters included in a handoff."
+        },
+        "handoff.maxDiffBytes": {
+          "type": "number",
+          "default": 102400,
+          "minimum": 0,
+          "description": "Maximum Git diff size in bytes. Changed files and diff stat remain available when exceeded."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p tsconfig.json",
+    "watch": "tsc -w -p tsconfig.json",
+    "test": "npm run compile && node --test \"dist/test/*.test.js\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,9 @@
+.vscode/**
+src/**
+test/**
+dist/test/**
+node_modules/**
+tsconfig.json
+plan.md
+findings.md
+package-lock.json

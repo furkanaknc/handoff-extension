@@ -1,0 +1,4 @@
+{"role":"user","message":{"content":[{"type":"text","text":"Fix the scheduler race."}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"I found the race in worker replacement."}]}}
+{"role":"user","message":{"content":[{"type":"text","text":"Implement it and add tests."}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Implemented the lock and regression test."}]}}

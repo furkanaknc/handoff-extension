@@ -1,0 +1,3 @@
+{"role":"user","message":{"content":[{"type":"text","text":"Valid message."}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Valid response."}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"partial"

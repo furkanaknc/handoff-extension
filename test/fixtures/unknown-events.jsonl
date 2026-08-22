@@ -1,0 +1,4 @@
+{"event":"telemetry","payload":{"anything":true}}
+{"role":"system","message":{"content":[{"type":"text","text":"internal"}]}}
+{"role":"user","message":{"content":[{"type":"image","data":"ignored"},{"type":"text","text":"Keep this."}]}}
+{"role":"assistant","message":{"content":[{"type":"unknown","text":"ignore this"},{"type":"text","text":"Keep this too."}]}}
