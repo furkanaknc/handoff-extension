@@ -49,6 +49,7 @@ function run(
     repository,
     previousState,
     targetSessionId: "target",
+    continuityVerified: true,
     handoffId: "next",
     createdAt: "2026-08-22T01:00:00.000Z",
     ...overrides,
@@ -111,4 +112,11 @@ test("falls back to full for shorter or mutated history", () => {
   );
   assert.equal(shorter.status === "handoff" && shorter.plan.mode, "full");
   assert.equal(mutated.status === "handoff" && mutated.plan.mode, "full");
+});
+
+test("requires verified continuity before using delta", () => {
+  const result = run([...abc, { role: "assistant", content: "D" }], previous(abc), {
+    continuityVerified: false,
+  });
+  assert.equal(result.status === "handoff" && result.plan.mode, "full");
 });

@@ -92,3 +92,41 @@ test("does not recursively export generated handoff transport text", () => {
     { role: "user", content: "Continue with the real task." },
   ]);
 });
+
+test("removes generated handoff attachment references but keeps the real request", () => {
+  const attachment = [
+    "# Files mentioned by the user:",
+    "",
+    "## handoff-2026-08-22T17-58-16-453Z-id.md: C:\\Users\\user\\AppData\\Roaming\\Cursor\\User\\globalStorage\\local.cursor-codex-handoff\\handoffs\\handoff-2026-08-22T17-58-16-453Z-id.md",
+    "",
+    "## My request for Codex:",
+    "bu context sende",
+  ].join("\n");
+  const conversation = parseCodexThread(
+    {
+      turns: [{
+        items: [
+          { type: "userMessage", content: [{ type: "text", text: attachment }] },
+        ],
+      }],
+    },
+    { maxMessages: 200, maxCharacters: 200_000 },
+  );
+  assert.deepEqual(conversation.messages, [
+    { role: "user", content: "## My request for Codex:\nbu context sende" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(conversation), /handoff-2026|globalStorage/);
+});
+
+test("drops attachment-only generated handoff user messages", () => {
+  const attachment = [
+    "# Files mentioned by the user:",
+    "",
+    "## handoff-2026-08-22T17-58-16-453Z-id.md: C:\\Users\\user\\AppData\\Roaming\\Cursor\\User\\globalStorage\\local.cursor-codex-handoff\\handoffs\\handoff-2026-08-22T17-58-16-453Z-id.md",
+  ].join("\n");
+  const conversation = parseCodexThread(
+    { turns: [{ items: [{ type: "userMessage", content: [{ type: "text", text: attachment }] }] }] },
+    { maxMessages: 200, maxCharacters: 200_000 },
+  );
+  assert.deepEqual(conversation.messages, []);
+});

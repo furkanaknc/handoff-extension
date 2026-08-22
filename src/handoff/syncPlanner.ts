@@ -36,6 +36,7 @@ export interface PlanHandoffInput {
   repository: GitContext;
   previousState?: DirectionSyncState;
   targetSessionId?: string;
+  continuityVerified: boolean;
   handoffId: string;
   createdAt: string;
 }
@@ -54,6 +55,7 @@ export function planHandoff(input: PlanHandoffInput): SyncPlanResult {
   const targetKnown =
     typeof targetSessionId === "string" && targetSessionId.length > 0;
   const canCompare =
+    input.continuityVerified &&
     sourceKnown &&
     targetKnown &&
     previousState !== undefined &&
@@ -93,6 +95,7 @@ export function planHandoff(input: PlanHandoffInput): SyncPlanResult {
         repositoryFingerprint,
         lastHandoffId: input.handoffId,
         lastHandoffAt: input.createdAt,
+        lastMode: mode,
       },
     },
   };

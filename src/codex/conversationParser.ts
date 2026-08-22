@@ -1,6 +1,9 @@
 import { applyConversationLimits, type TranscriptLimits } from "../cursor/transcriptParser";
 import type { Conversation, HandoffMessage } from "../handoff/types";
-import { isGeneratedHandoffText } from "../handoff/provenance";
+import {
+  isGeneratedHandoffText,
+  stripGeneratedHandoffReferences,
+} from "../handoff/provenance";
 
 const IMAGE_PLACEHOLDER = "[User attached an image; image content was not included in this handoff.]";
 
@@ -48,8 +51,9 @@ function userText(item: CodexItem): string | undefined {
     .map((part) => part.text)
     .filter((value) => value.trim().length > 0)
     .join("\n\n");
-  if (text.length > 0 && !isGeneratedHandoffText(text)) {
-    return text;
+  const sanitized = stripGeneratedHandoffReferences(text);
+  if (sanitized.length > 0 && !isGeneratedHandoffText(sanitized)) {
+    return sanitized;
   }
   return item.content.some(
     (part) =>
@@ -114,16 +118,18 @@ export function parseCodexThread(
           item.phase === "commentary" ||
           item.phase === "final_answer")
       ) {
-        if (!isGeneratedHandoffText(item.text)) {
-          appendOrCoalesce(messages, { role: "assistant", content: item.text });
+        const content = stripGeneratedHandoffReferences(item.text);
+        if (content && !isGeneratedHandoffText(content)) {
+          appendOrCoalesce(messages, { role: "assistant", content });
         }
       } else if (
         item.type === "plan" &&
         typeof item.text === "string" &&
         item.text.trim().length > 0
       ) {
-        if (!isGeneratedHandoffText(item.text)) {
-          appendOrCoalesce(messages, { role: "assistant", content: item.text });
+        const content = stripGeneratedHandoffReferences(item.text);
+        if (content && !isGeneratedHandoffText(content)) {
+          appendOrCoalesce(messages, { role: "assistant", content });
         }
       }
     }

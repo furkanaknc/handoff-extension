@@ -47,10 +47,33 @@ export interface DirectionSyncState {
   repositoryFingerprint: string;
   lastHandoffId: string;
   lastHandoffAt: string;
+  lastMode?: HandoffMode;
+}
+
+export type SessionBindingVerificationMethod =
+  | "active-state"
+  | "explicit-selection"
+  | "post-attachment"
+  | "other";
+
+export interface SessionBinding {
+  cursorConversationId: string;
+  codexThreadId: string;
+  workspaceHash: string;
+  createdAt: string;
+  verifiedAt: string;
+  verificationMethod: SessionBindingVerificationMethod;
+}
+
+export interface ResolvedTargetSession {
+  id: string;
+  label: string;
+  verificationMethod: SessionBindingVerificationMethod;
 }
 
 export interface WorkspaceMemory {
-  version: 1;
+  version: 2;
+  sessionBinding?: SessionBinding;
   cursorToCodex?: DirectionSyncState;
   codexToCursor?: DirectionSyncState;
 }
@@ -71,7 +94,10 @@ export interface CodexConversationSource {
 }
 
 export interface CodexTarget {
-  sendHandoff(context: HandoffContext): Promise<void | boolean>;
+  sendHandoff(
+    context: HandoffContext,
+    targetSession?: ResolvedTargetSession,
+  ): Promise<void | boolean>;
 }
 
 export interface CursorTarget {
@@ -81,9 +107,10 @@ export interface CursorTarget {
 
 export interface SyncStateStore {
   load(workspacePath: string): Promise<WorkspaceMemory>;
-  saveDirection(
+  commitSuccessfulTransfer(
     workspacePath: string,
     direction: HandoffDirection,
     state: DirectionSyncState,
+    sessionBinding?: SessionBinding,
   ): Promise<void>;
 }

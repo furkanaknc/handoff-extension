@@ -11,11 +11,14 @@ API key, or install a separate Codex CLI.
 Handoff: Cursor → Codex
 Handoff: Codex → Cursor
 Handoff: Reset Sync State
+Handoff: Show Sync Diagnostics
+Handoff: Open Control Center
 ```
 
-The two transfer commands are also available as always-visible status bar
-buttons, so normal use does not require opening the Command Palette. Clicking a
-button prepares and attaches the handoff but still never submits a model turn.
+A single always-visible `Handoff` status-bar button opens a control center that
+shows binding and last-transfer state for both directions. From the same menu
+the user can start either transfer, open full diagnostics, or reset all
+workspace handoff state. Transfers still never submit a model turn.
 
 ## Stateful handoff synchronization
 
@@ -25,12 +28,17 @@ may contain only new visible messages, or only repository changes, when the
 source history prefix and the exact receiving Cursor conversation both match
 the previous successful transfer. If nothing changed, no file is created.
 
-The active Codex target thread ID is not exposed reliably by the current public
-extension interface. Cursor → Codex therefore deliberately remains a full
-handoff on every run. Switching sessions, shortened or mutated history,
-missing/corrupt state, or unknown target identity always falls back to full.
+The active Codex sidebar thread ID is not exposed reliably by the current
+public extension interface. For verified Codex extension versions, Cursor →
+Codex therefore asks the user to select a workspace thread, opens that exact
+thread through the official extension's local URI handler, and requires an
+explicit confirmation before attachment. The first successful transfer creates
+a workspace-scoped binding; later transfers to the same verified pair can use
+delta synchronization. Unsupported Codex versions, shortened or mutated
+history, missing/corrupt state, or unknown target identity always fall back to
+full.
 
-Sync state advances only after native attachment succeeds. The clipboard
+Binding and sync state advance atomically only after native attachment succeeds. The clipboard
 fallback is useful for recovery but is not recorded as synchronized. Generated
 Markdown carries inspectable provenance and is excluded from later exports to
 avoid recursive handoff growth. `Handoff: Reset Sync State` deletes only the
@@ -46,8 +54,9 @@ Cursor-provided transcript path under extension storage; transcript content is
 not copied or logged by the hook.
 
 The command parses visible user/assistant text, captures optional Git context,
-writes a temporary Markdown handoff, and attaches it to the active Codex thread
-with `chatgpt.addFileToThread`.
+and lists matching Codex threads for the workspace. After the user chooses and
+verifies the target, it writes a temporary Markdown handoff and attaches it with
+`chatgpt.addFileToThread` without submitting a model turn.
 
 ### Codex → Cursor
 
@@ -107,9 +116,9 @@ handed off.
 
 - Windows-first local milestone
 - No automatic model submission
-- No status bar or keyboard shortcut
-- Delta synchronization is currently stronger for Codex → Cursor; Cursor →
-  Codex stays full because the active Codex target thread cannot be proven
+- No keyboard shortcut
+- Deterministic Cursor → Codex routing is version-gated against inspected
+  official Codex extension builds; unverified builds remain full-only
 - No undocumented Cursor SQLite conversation source
 
 ## Implementation note

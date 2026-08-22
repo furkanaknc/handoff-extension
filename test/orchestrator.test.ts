@@ -9,6 +9,7 @@ import type {
   CodexTarget,
   CursorConversationSource,
   HandoffContext,
+  HandoffMessage,
   WorkspaceMemory,
 } from "../src/handoff/types";
 
@@ -94,16 +95,25 @@ test("does not call the target when conversation capture fails", async () => {
   assert.equal(called, false);
 });
 
-function memoryStore(initial: WorkspaceMemory = { version: 1 }) {
+function memoryStore(initial: WorkspaceMemory = { version: 2 }) {
   let memory = initial;
   let saves = 0;
   return {
     async load() {
       return memory;
     },
-    async saveDirection(_workspace: string, direction: "cursorToCodex" | "codexToCursor", state: any) {
+    async commitSuccessfulTransfer(
+      _workspace: string,
+      direction: "cursorToCodex" | "codexToCursor",
+      state: any,
+      sessionBinding?: any,
+    ) {
       saves++;
-      memory = { ...memory, [direction]: state };
+      memory = {
+        ...memory,
+        [direction]: state,
+        ...(sessionBinding ? { sessionBinding } : {}),
+      };
     },
     get memory() {
       return memory;
@@ -203,4 +213,72 @@ test("manual fallback does not advance sync state", async () => {
   });
   assert.equal(result.status, "manual-transfer");
   assert.equal(store.saves, 0);
+});
+
+test("creates a binding after FULL and uses DELTA only for the verified same pair", async () => {
+  const store = memoryStore();
+  let messages: HandoffMessage[] = [{ role: "user", content: "A" }];
+  const modes: Array<string | undefined> = [];
+  const options = {
+    workspacePath: "workspace",
+    direction: "cursorToCodex" as const,
+    sourceKind: "cursor" as const,
+    source: {
+      async getCurrentConversation() {
+        return { id: "C1", truncated: false, messages };
+      },
+    },
+    target: {
+      async sendHandoff(context: HandoffContext) {
+        modes.push(context.metadata.mode);
+        return true;
+      },
+    },
+    getRepositoryContext: async () => ({ changedFiles: [], diffTruncated: false }),
+    syncStateStore: store,
+    resolveTargetSession: async () => ({
+      id: "X1",
+      label: "Thread X1",
+      verificationMethod: "explicit-selection" as const,
+    }),
+    now: () => new Date("2026-08-22T14:00:00.000Z"),
+  };
+
+  await performSynchronizedHandoff(options);
+  assert.equal(store.memory.sessionBinding?.cursorConversationId, "C1");
+  assert.equal(store.memory.sessionBinding?.codexThreadId, "X1");
+  messages = [...messages, { role: "assistant", content: "B" }];
+  await performSynchronizedHandoff(options);
+  assert.deepEqual(modes, ["full", "delta"]);
+});
+
+test("does not persist a new binding when Cursor to Codex attachment fails", async () => {
+  const store = memoryStore();
+  await assert.rejects(
+    performSynchronizedHandoff({
+      workspacePath: "workspace",
+      direction: "cursorToCodex",
+      sourceKind: "cursor",
+      source: {
+        async getCurrentConversation() {
+          return {
+            id: "C1",
+            truncated: false,
+            messages: [{ role: "user", content: "A" }],
+          };
+        },
+      },
+      target: { async sendHandoff() { throw new Error("attach failed"); } },
+      getRepositoryContext: async () => ({ changedFiles: [], diffTruncated: false }),
+      syncStateStore: store,
+      resolveTargetSession: async () => ({
+        id: "X1",
+        label: "Thread X1",
+        verificationMethod: "explicit-selection",
+      }),
+    }),
+    /attach failed/,
+  );
+  assert.equal(store.saves, 0);
+  assert.equal(store.memory.sessionBinding, undefined);
 });

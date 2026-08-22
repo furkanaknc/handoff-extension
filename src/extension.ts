@@ -2,6 +2,7 @@ import path from "node:path";
 import * as vscode from "vscode";
 import { OfficialCodexTarget } from "./codex/codexTarget";
 import { OfficialCodexConversationSource } from "./codex/conversationSource";
+import { CodexThreadTargetResolver } from "./codex/threadTargetResolver";
 import { HookCursorConversationSource } from "./cursor/conversationSource";
 import { OfficialCursorTarget } from "./cursor/cursorTarget";
 import { ensureCursorHookInstalled } from "./cursor/hookInstaller";
@@ -81,6 +82,31 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     },
   );
+  const diagnostics = vscode.window.createOutputChannel("Handoff Diagnostics");
+  let controlCenterButton: vscode.StatusBarItem | undefined;
+
+  const refreshBindingStatus = async (): Promise<void> => {
+    if (!controlCenterButton) {
+      return;
+    }
+    const workspaceFolder = activeWorkspaceFolder();
+    if (!workspaceFolder) {
+      controlCenterButton.text = "$(warning) Handoff";
+      controlCenterButton.tooltip = "No active workspace; handoff unavailable";
+      return;
+    }
+    const memory = await syncStateStore.load(workspaceFolder.uri.fsPath);
+    const bound = memory.sessionBinding !== undefined;
+    controlCenterButton.text = bound ? "$(sync) Handoff" : "$(warning) Handoff";
+    controlCenterButton.tooltip = new vscode.MarkdownString(
+      [
+        `**Session binding:** ${bound ? "verified" : "unverified"}`,
+        `**Cursor → Codex:** ${memory.cursorToCodex?.lastMode ?? "never"}`,
+        `**Codex → Cursor:** ${memory.codexToCursor?.lastMode ?? "never"}`,
+        "Click to open the Handoff control center.",
+      ].join("  \n"),
+    );
+  };
   const cursorToCodex = vscode.commands.registerCommand(
     "handoff.cursorToCodex",
     async () => {
@@ -115,9 +141,11 @@ export function activate(context: vscode.ExtensionContext): void {
             200_000,
           ),
         });
+        const targetResolver = new CodexThreadTargetResolver();
         const target = new OfficialCodexTarget(
           context.globalStorageUri,
           positiveIntegerSetting("maxStoredHandoffs", 5),
+          targetResolver,
         );
         const maxDiffBytes = nonNegativeIntegerSetting(
           "maxDiffBytes",
@@ -140,9 +168,12 @@ export function activate(context: vscode.ExtensionContext): void {
               getRepositoryContext: (workspacePath) =>
                 getGitContext(workspacePath, maxDiffBytes),
               syncStateStore,
+              resolveTargetSession: (workspacePath, binding) =>
+                targetResolver.resolveTargetSession(workspacePath, binding),
             }),
         );
         await showSyncResult("Cursor → Codex", result);
+        await refreshBindingStatus();
       } catch (error) {
         console.error("Cursor Codex Handoff failed", {
           errorName: error instanceof Error ? error.name : typeof error,
@@ -231,40 +262,150 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       await syncStateStore.reset(workspaceFolder.uri.fsPath);
+      await refreshBindingStatus();
       await vscode.window.showInformationMessage(
         "Handoff sync state was reset. The next transfer in each direction will be full.",
       );
     },
   );
 
-  const cursorToCodexButton = vscode.window.createStatusBarItem(
+  const showDiagnostics = vscode.commands.registerCommand(
+    "handoff.showSyncDiagnostics",
+    async () => {
+      const workspaceFolder = activeWorkspaceFolder();
+      if (!workspaceFolder) {
+        await vscode.window.showErrorMessage(
+          "No active workspace is open. Open a folder before showing handoff diagnostics.",
+        );
+        return;
+      }
+      const memory = await syncStateStore.load(workspaceFolder.uri.fsPath);
+      const binding = memory.sessionBinding;
+      diagnostics.clear();
+      diagnostics.appendLine("Cursor Codex Handoff diagnostics");
+      diagnostics.appendLine(`Workspace: ${workspaceFolder.uri.fsPath}`);
+      diagnostics.appendLine(`Memory version: ${memory.version}`);
+      diagnostics.appendLine(`Binding: ${binding ? "verified" : "unverified"}`);
+      diagnostics.appendLine(
+        `Cursor conversation: ${binding?.cursorConversationId ?? "unknown"}`,
+      );
+      diagnostics.appendLine(`Codex thread: ${binding?.codexThreadId ?? "unknown"}`);
+      diagnostics.appendLine(
+        `Verification method: ${binding?.verificationMethod ?? "none"}`,
+      );
+      diagnostics.appendLine(`Verified at: ${binding?.verifiedAt ?? "never"}`);
+      for (const [label, state] of [
+        ["Cursor → Codex", memory.cursorToCodex],
+        ["Codex → Cursor", memory.codexToCursor],
+      ] as const) {
+        diagnostics.appendLine("");
+        diagnostics.appendLine(label);
+        diagnostics.appendLine(`  Source session: ${state?.sourceSessionId ?? "unknown"}`);
+        diagnostics.appendLine(`  Target session: ${state?.targetSessionId ?? "unknown"}`);
+        diagnostics.appendLine(`  Last handoff: ${state?.lastHandoffId ?? "never"}`);
+        diagnostics.appendLine(`  Last handoff at: ${state?.lastHandoffAt ?? "never"}`);
+        diagnostics.appendLine(`  Last mode: ${state?.lastMode ?? "unknown"}`);
+      }
+      diagnostics.show(true);
+    },
+  );
+
+  const openControlCenter = vscode.commands.registerCommand(
+    "handoff.openControlCenter",
+    async () => {
+      const workspaceFolder = activeWorkspaceFolder();
+      if (!workspaceFolder) {
+        await vscode.window.showErrorMessage(
+          "No active workspace is open. Open a folder before using Handoff.",
+        );
+        return;
+      }
+      const memory = await syncStateStore.load(workspaceFolder.uri.fsPath);
+      const binding = memory.sessionBinding;
+      const describeState = (
+        state: typeof memory.cursorToCodex,
+      ): string =>
+        state
+          ? `${state.lastMode ?? "unknown"} • ${new Date(state.lastHandoffAt).toLocaleString()}`
+          : "Never transferred";
+      const picked = await vscode.window.showQuickPick(
+        [
+          {
+            label: binding
+              ? "$(verified-filled) Session binding verified"
+              : "$(warning) Session binding unverified",
+            description: binding?.verificationMethod ?? "Next transfer will be FULL",
+            detail: binding
+              ? `Cursor ${binding.cursorConversationId} ↔ Codex ${binding.codexThreadId}`
+              : "No verified Cursor/Codex pair is stored for this workspace.",
+            action: "diagnostics" as const,
+          },
+          {
+            label: "$(arrow-right) Cursor → Codex",
+            description: describeState(memory.cursorToCodex),
+            detail: "Select and attach the current Cursor conversation to a Codex thread.",
+            action: "cursorToCodex" as const,
+          },
+          {
+            label: "$(arrow-left) Codex → Cursor",
+            description: describeState(memory.codexToCursor),
+            detail: "Attach a Codex conversation to the current Cursor conversation.",
+            action: "codexToCursor" as const,
+          },
+          {
+            label: "$(output) Show full sync diagnostics",
+            description: "IDs, binding, last modes and timestamps",
+            action: "diagnostics" as const,
+          },
+          {
+            label: "$(trash) Reset all handoff state…",
+            description: "Delete transfer state and session binding for this workspace",
+            detail: "The next transfer in each direction will be FULL.",
+            action: "reset" as const,
+          },
+        ],
+        {
+          title: "Handoff Control Center",
+          placeHolder: "Inspect state or choose an action",
+        },
+      );
+      if (!picked) {
+        return;
+      }
+      const commands = {
+        cursorToCodex: "handoff.cursorToCodex",
+        codexToCursor: "handoff.codexToCursor",
+        diagnostics: "handoff.showSyncDiagnostics",
+        reset: "handoff.resetSyncState",
+      } as const;
+      await vscode.commands.executeCommand(commands[picked.action]);
+      await refreshBindingStatus();
+    },
+  );
+
+  controlCenterButton = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     101,
   );
-  cursorToCodexButton.name = "Handoff: Cursor → Codex";
-  cursorToCodexButton.text = "$(arrow-right) Cursor → Codex";
-  cursorToCodexButton.tooltip =
-    "Attach the current Cursor conversation and repository context to Codex";
-  cursorToCodexButton.command = "handoff.cursorToCodex";
-  cursorToCodexButton.show();
-
-  const codexToCursorButton = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Left,
-    100,
-  );
-  codexToCursorButton.name = "Handoff: Codex → Cursor";
-  codexToCursorButton.text = "$(arrow-left) Codex → Cursor";
-  codexToCursorButton.tooltip =
-    "Attach the current Codex conversation and repository context to Cursor";
-  codexToCursorButton.command = "handoff.codexToCursor";
-  codexToCursorButton.show();
+  controlCenterButton.name = "Handoff Control Center";
+  controlCenterButton.command = "handoff.openControlCenter";
+  controlCenterButton.show();
+  void refreshBindingStatus();
 
   context.subscriptions.push(
     cursorToCodex,
     codexToCursor,
     resetSyncState,
-    cursorToCodexButton,
-    codexToCursorButton,
+    showDiagnostics,
+    openControlCenter,
+    diagnostics,
+    controlCenterButton,
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      void refreshBindingStatus();
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void refreshBindingStatus();
+    }),
   );
 }
 

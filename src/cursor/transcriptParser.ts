@@ -1,7 +1,10 @@
 import { createReadStream } from "node:fs";
 import readline from "node:readline";
 import type { Conversation, HandoffMessage, HandoffRole } from "../handoff/types";
-import { isGeneratedHandoffText } from "../handoff/provenance";
+import {
+  isGeneratedHandoffText,
+  stripGeneratedHandoffReferences,
+} from "../handoff/provenance";
 
 export interface TranscriptLimits {
   maxMessages: number;
@@ -36,8 +39,9 @@ function visibleTextFromEvent(event: TranscriptEvent): HandoffMessage | undefine
     .filter((value) => value.trim().length > 0)
     .join("\n\n");
 
-  return text.length > 0 && !isGeneratedHandoffText(text)
-    ? { role: event.role as HandoffRole, content: text }
+  const sanitized = stripGeneratedHandoffReferences(text);
+  return sanitized.length > 0 && !isGeneratedHandoffText(sanitized)
+    ? { role: event.role as HandoffRole, content: sanitized }
     : undefined;
 }
 

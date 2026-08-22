@@ -104,3 +104,29 @@ test("does not recursively export generated handoff transport text", async (t) =
     { role: "user", content: "Keep this follow-up." },
   ]);
 });
+
+test("strips generated handoff file references from Cursor transcript text", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-transcript-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const transcriptPath = path.join(directory, "transcript.jsonl");
+  const attachment = [
+    "# Files mentioned by the user:",
+    "",
+    "## handoff-2026-08-22T17-58-16-453Z-id.md: C:\\Users\\user\\AppData\\Roaming\\Cursor\\User\\globalStorage\\local.cursor-codex-handoff\\handoffs\\handoff-2026-08-22T17-58-16-453Z-id.md",
+    "",
+    "## My request for Cursor:",
+    "Continue the actual task.",
+  ].join("\n");
+  await fs.writeFile(
+    transcriptPath,
+    JSON.stringify({
+      role: "user",
+      message: { content: [{ type: "text", text: attachment }] },
+    }),
+  );
+  const conversation = await parseCursorTranscript(transcriptPath, "id", limits);
+  assert.deepEqual(conversation.messages, [
+    { role: "user", content: "## My request for Cursor:\nContinue the actual task." },
+  ]);
+  assert.doesNotMatch(JSON.stringify(conversation), /handoff-2026|globalStorage/);
+});

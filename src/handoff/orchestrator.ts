@@ -8,8 +8,11 @@ import type {
   GitContext,
   HandoffContext,
   HandoffDirection,
+  ResolvedTargetSession,
+  SessionBinding,
   SyncStateStore,
 } from "./types";
+import { hashWorkspacePath } from "./syncStateStore";
 
 export type GitContextProvider = (
   workspacePath: string,
@@ -32,6 +35,10 @@ interface SynchronizedHandoffOptions {
   getRepositoryContext: GitContextProvider;
   syncStateStore: SyncStateStore;
   getTargetSessionId?: (workspacePath: string) => Promise<string | undefined>;
+  resolveTargetSession?: (
+    workspacePath: string,
+    binding?: SessionBinding,
+  ) => Promise<ResolvedTargetSession | undefined>;
   now?: () => Date;
   createHandoffId?: () => string;
 }
@@ -39,21 +46,37 @@ interface SynchronizedHandoffOptions {
 export async function performSynchronizedHandoff(
   options: SynchronizedHandoffOptions,
 ): Promise<SynchronizedHandoffResult> {
-  const [conversation, repository, memory, targetSessionId] = await Promise.all([
+  const [conversation, repository, memory] = await Promise.all([
     options.source.getCurrentConversation(options.workspacePath),
     options.getRepositoryContext(options.workspacePath),
     options.syncStateStore.load(options.workspacePath),
-    options.getTargetSessionId?.(options.workspacePath) ??
-      Promise.resolve(undefined),
   ]);
+  const targetSession = await options.resolveTargetSession?.(
+    options.workspacePath,
+    memory.sessionBinding,
+  );
+  const targetSessionId =
+    targetSession?.id ??
+    (await (options.getTargetSessionId?.(options.workspacePath) ??
+      Promise.resolve(undefined)));
   const createdAt = (options.now ?? (() => new Date()))().toISOString();
   const handoffId = (options.createHandoffId ?? randomUUID)();
   const previousState = memory[options.direction];
+  const binding = memory.sessionBinding;
+  const continuityVerified =
+    options.direction === "cursorToCodex"
+      ? targetSession !== undefined &&
+        conversation.id !== undefined &&
+        binding?.cursorConversationId === conversation.id &&
+        binding.codexThreadId === targetSession.id &&
+        binding.workspaceHash === hashWorkspacePath(options.workspacePath)
+      : targetSessionId !== undefined;
   const result = planHandoff({
     conversation,
     repository,
     previousState,
     targetSessionId,
+    continuityVerified,
     handoffId,
     createdAt,
   });
@@ -82,14 +105,34 @@ export async function performSynchronizedHandoff(
     },
   };
 
-  const targetResult = await options.target.sendHandoff(context);
+  const targetResult = await options.target.sendHandoff(context, targetSession);
   if (targetResult === false) {
     return { status: "manual-transfer", context, messageCount: plan.messages.length };
   }
-  await options.syncStateStore.saveDirection(
+  let nextBinding: SessionBinding | undefined;
+  if (
+    options.direction === "cursorToCodex" &&
+    targetSession &&
+    conversation.id
+  ) {
+    const samePair =
+      binding?.cursorConversationId === conversation.id &&
+      binding.codexThreadId === targetSession.id &&
+      binding.workspaceHash === hashWorkspacePath(options.workspacePath);
+    nextBinding = {
+      cursorConversationId: conversation.id,
+      codexThreadId: targetSession.id,
+      workspaceHash: hashWorkspacePath(options.workspacePath),
+      createdAt: samePair && binding ? binding.createdAt : createdAt,
+      verifiedAt: createdAt,
+      verificationMethod: targetSession.verificationMethod,
+    };
+  }
+  await options.syncStateStore.commitSuccessfulTransfer(
     options.workspacePath,
     options.direction,
     plan.nextSyncState,
+    nextBinding,
   );
   return { status: "transferred", context, messageCount: plan.messages.length };
 }

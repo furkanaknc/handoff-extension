@@ -59,7 +59,7 @@ export class CodexAppServerClient {
       clientInfo: {
         name: "cursor_codex_handoff",
         title: "Cursor Codex Handoff",
-        version: "0.0.4",
+        version: "0.0.12",
       },
     });
     this.notify("initialized", {});

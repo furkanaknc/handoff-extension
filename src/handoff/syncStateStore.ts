@@ -4,6 +4,7 @@ import path from "node:path";
 import type {
   DirectionSyncState,
   HandoffDirection,
+  SessionBinding,
   WorkspaceMemory,
 } from "./types";
 
@@ -13,9 +14,13 @@ function normalizeWorkspacePath(workspacePath: string): string {
 }
 
 function memoryFileName(workspacePath: string): string {
-  return `${createHash("sha256")
+  return `${hashWorkspacePath(workspacePath)}.json`;
+}
+
+export function hashWorkspacePath(workspacePath: string): string {
+  return createHash("sha256")
     .update(normalizeWorkspacePath(workspacePath), "utf8")
-    .digest("hex")}.json`;
+    .digest("hex");
 }
 
 function isDirectionState(value: unknown): value is DirectionSyncState {
@@ -32,8 +37,45 @@ function isDirectionState(value: unknown): value is DirectionSyncState {
     typeof state.repositoryFingerprint === "string" &&
     typeof state.lastHandoffId === "string" &&
     typeof state.lastHandoffAt === "string" &&
+    (state.lastMode === undefined ||
+      state.lastMode === "full" ||
+      state.lastMode === "delta" ||
+      state.lastMode === "repository-only") &&
     (state.targetSessionId === undefined ||
       typeof state.targetSessionId === "string")
+  );
+}
+
+function isSessionBinding(value: unknown): value is SessionBinding {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  const binding = value as Partial<SessionBinding>;
+  return (
+    typeof binding.cursorConversationId === "string" &&
+    binding.cursorConversationId.length > 0 &&
+    typeof binding.codexThreadId === "string" &&
+    binding.codexThreadId.length > 0 &&
+    typeof binding.workspaceHash === "string" &&
+    binding.workspaceHash.length > 0 &&
+    typeof binding.createdAt === "string" &&
+    typeof binding.verifiedAt === "string" &&
+    (binding.verificationMethod === "active-state" ||
+      binding.verificationMethod === "explicit-selection" ||
+      binding.verificationMethod === "post-attachment" ||
+      binding.verificationMethod === "other")
+  );
+}
+
+function validDirections(memory: {
+  cursorToCodex?: unknown;
+  codexToCursor?: unknown;
+}): boolean {
+  return (
+    (memory.cursorToCodex === undefined ||
+      isDirectionState(memory.cursorToCodex)) &&
+    (memory.codexToCursor === undefined ||
+      isDirectionState(memory.codexToCursor))
   );
 }
 
@@ -43,17 +85,28 @@ function parseMemory(raw: string): WorkspaceMemory | undefined {
     if (value === null || typeof value !== "object") {
       return undefined;
     }
-    const memory = value as Partial<WorkspaceMemory>;
+    const memory = value as Record<string, unknown>;
+    if (!validDirections(memory)) {
+      return undefined;
+    }
+    if (memory.version === 1) {
+      const migrated: WorkspaceMemory = { version: 2 };
+      if (memory.cursorToCodex !== undefined) {
+        migrated.cursorToCodex = memory.cursorToCodex as DirectionSyncState;
+      }
+      if (memory.codexToCursor !== undefined) {
+        migrated.codexToCursor = memory.codexToCursor as DirectionSyncState;
+      }
+      return migrated;
+    }
     if (
-      memory.version !== 1 ||
-      (memory.cursorToCodex !== undefined &&
-        !isDirectionState(memory.cursorToCodex)) ||
-      (memory.codexToCursor !== undefined &&
-        !isDirectionState(memory.codexToCursor))
+      memory.version !== 2 ||
+      (memory.sessionBinding !== undefined &&
+        !isSessionBinding(memory.sessionBinding))
     ) {
       return undefined;
     }
-    return memory as WorkspaceMemory;
+    return memory as unknown as WorkspaceMemory;
   } catch {
     return undefined;
   }
@@ -73,23 +126,27 @@ export class FileSyncStateStore {
         return parsed;
       }
       this.onInvalidState();
-      return { version: 1 };
+      return { version: 2 };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { version: 1 };
+        return { version: 2 };
       }
       this.onInvalidState();
-      return { version: 1 };
+      return { version: 2 };
     }
   }
 
-  async saveDirection(
+  async commitSuccessfulTransfer(
     workspacePath: string,
     direction: HandoffDirection,
     state: DirectionSyncState,
+    sessionBinding?: SessionBinding,
   ): Promise<void> {
     const memory = await this.load(workspacePath);
     memory[direction] = state;
+    if (sessionBinding) {
+      memory.sessionBinding = sessionBinding;
+    }
     await this.atomicWrite(workspacePath, memory);
   }
 

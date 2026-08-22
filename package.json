@@ -2,7 +2,7 @@
   "name": "cursor-codex-handoff",
   "displayName": "Cursor Codex Handoff",
   "description": "Transfer conversation and repository context between Cursor Agent and the official Codex extension.",
-  "version": "0.0.8",
+  "version": "0.0.12",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -18,7 +18,9 @@
     "onStartupFinished",
     "onCommand:handoff.cursorToCodex",
     "onCommand:handoff.codexToCursor",
-    "onCommand:handoff.resetSyncState"
+    "onCommand:handoff.resetSyncState",
+    "onCommand:handoff.showSyncDiagnostics",
+    "onCommand:handoff.openControlCenter"
   ],
   "main": "./dist/src/extension.js",
   "contributes": {
@@ -34,6 +36,14 @@
       {
         "command": "handoff.resetSyncState",
         "title": "Handoff: Reset Sync State"
+      },
+      {
+        "command": "handoff.showSyncDiagnostics",
+        "title": "Handoff: Show Sync Diagnostics"
+      },
+      {
+        "command": "handoff.openControlCenter",
+        "title": "Handoff: Open Control Center"
       }
     ],
     "configuration": {

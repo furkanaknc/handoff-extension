@@ -19,9 +19,9 @@ test("atomically stores workspace-scoped directional state", async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-memory-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const store = new FileSyncStateStore(directory);
-  await store.saveDirection("C:\\work\\one", "codexToCursor", state);
+  await store.commitSuccessfulTransfer("C:\\work\\one", "codexToCursor", state);
   assert.deepEqual((await store.load("C:\\work\\one")).codexToCursor, state);
-  assert.deepEqual(await store.load("C:\\work\\two"), { version: 1 });
+  assert.deepEqual(await store.load("C:\\work\\two"), { version: 2 });
 });
 
 test("corrupt state safely falls back to empty memory and reset removes it", async (t) => {
@@ -31,8 +31,49 @@ test("corrupt state safely falls back to empty memory and reset removes it", asy
   const store = new FileSyncStateStore(directory, () => warnings++);
   await fs.mkdir(path.dirname(store.pathForTesting("workspace")), { recursive: true });
   await fs.writeFile(store.pathForTesting("workspace"), "{broken", "utf8");
-  assert.deepEqual(await store.load("workspace"), { version: 1 });
+  assert.deepEqual(await store.load("workspace"), { version: 2 });
   assert.equal(warnings, 1);
   await store.reset("workspace");
   assert.equal(await fs.stat(store.pathForTesting("workspace")).then(() => true, () => false), false);
+});
+
+test("migrates valid V1 state in memory", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-memory-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const store = new FileSyncStateStore(directory);
+  await fs.mkdir(path.dirname(store.pathForTesting("workspace")), { recursive: true });
+  await fs.writeFile(
+    store.pathForTesting("workspace"),
+    JSON.stringify({ version: 1, cursorToCodex: state }),
+    "utf8",
+  );
+  assert.deepEqual(await store.load("workspace"), {
+    version: 2,
+    cursorToCodex: state,
+  });
+});
+
+test("atomically commits a session binding with directional state", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-memory-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const store = new FileSyncStateStore(directory);
+  const binding = {
+    cursorConversationId: "cursor",
+    codexThreadId: "codex",
+    workspaceHash: "workspace-hash",
+    createdAt: "2026-08-22T00:00:00.000Z",
+    verifiedAt: "2026-08-22T00:01:00.000Z",
+    verificationMethod: "explicit-selection" as const,
+  };
+  await store.commitSuccessfulTransfer(
+    "workspace",
+    "cursorToCodex",
+    state,
+    binding,
+  );
+  assert.deepEqual(await store.load("workspace"), {
+    version: 2,
+    sessionBinding: binding,
+    cursorToCodex: state,
+  });
 });
