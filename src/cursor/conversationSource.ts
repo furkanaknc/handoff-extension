@@ -32,6 +32,49 @@ function isPointer(value: unknown): value is CursorConversationPointer {
   );
 }
 
+export async function readCursorConversationPointer(
+  stateDirectory: string,
+  workspacePath: string,
+): Promise<CursorConversationPointer> {
+  const pointerPath = path.join(stateDirectory, pointerFileName(workspacePath));
+
+  let raw: string;
+  try {
+    raw = await fs.readFile(pointerPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new HandoffError(
+        "HOOK_NOT_READY",
+        "No active Cursor Agent conversation was captured. Send one message in Cursor Chat after installing the hook, then retry.",
+      );
+    }
+    throw error;
+  }
+
+  let pointer: unknown;
+  try {
+    pointer = JSON.parse(raw);
+  } catch (error) {
+    throw new HandoffError(
+      "POINTER_INVALID",
+      "The active Cursor conversation pointer is malformed. Send another Cursor Chat message and retry.",
+      { cause: error },
+    );
+  }
+
+  if (
+    !isPointer(pointer) ||
+    normalizeWorkspacePath(pointer.workspaceRoot) !==
+      normalizeWorkspacePath(workspacePath)
+  ) {
+    throw new HandoffError(
+      "POINTER_INVALID",
+      "The captured Cursor conversation does not match the active workspace.",
+    );
+  }
+  return pointer;
+}
+
 export class HookCursorConversationSource
   implements CursorConversationSource
 {
@@ -41,45 +84,10 @@ export class HookCursorConversationSource
   ) {}
 
   async getCurrentConversation(workspacePath: string): Promise<Conversation> {
-    const pointerPath = path.join(
+    const pointer = await readCursorConversationPointer(
       this.stateDirectory,
-      pointerFileName(workspacePath),
+      workspacePath,
     );
-
-    let raw: string;
-    try {
-      raw = await fs.readFile(pointerPath, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new HandoffError(
-          "HOOK_NOT_READY",
-          "No active Cursor Agent conversation was captured. Send one message in Cursor Chat after installing the hook, then retry.",
-        );
-      }
-      throw error;
-    }
-
-    let pointer: unknown;
-    try {
-      pointer = JSON.parse(raw);
-    } catch (error) {
-      throw new HandoffError(
-        "POINTER_INVALID",
-        "The active Cursor conversation pointer is malformed. Send another Cursor Chat message and retry.",
-        { cause: error },
-      );
-    }
-
-    if (
-      !isPointer(pointer) ||
-      normalizeWorkspacePath(pointer.workspaceRoot) !==
-        normalizeWorkspacePath(workspacePath)
-    ) {
-      throw new HandoffError(
-        "POINTER_INVALID",
-        "The captured Cursor conversation does not match the active workspace.",
-      );
-    }
 
     try {
       const stat = await fs.stat(pointer.transcriptPath);

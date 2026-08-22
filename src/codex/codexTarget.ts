@@ -9,8 +9,8 @@ const ADD_FILE_COMMAND = "chatgpt.addFileToThread";
 export class OfficialCodexTarget implements CodexTarget {
   private readonly store: HandoffFileStore;
 
-  constructor(globalStorageUri: vscode.Uri) {
-    this.store = new HandoffFileStore(globalStorageUri.fsPath);
+  constructor(globalStorageUri: vscode.Uri, keepHandoffCount = 5) {
+    this.store = new HandoffFileStore(globalStorageUri.fsPath, keepHandoffCount);
   }
 
   async sendHandoff(context: HandoffContext): Promise<void> {

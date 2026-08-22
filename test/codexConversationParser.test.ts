@@ -74,3 +74,21 @@ test("detects active turns and applies conversation limits", () => {
     { role: "assistant", content: "def" },
   ]);
 });
+
+test("does not recursively export generated handoff transport text", () => {
+  const generated = "<!-- cursor-codex-handoff\nversion: 1\nhandoff-id: old\n-->\n# Handoff";
+  const conversation = parseCodexThread(
+    {
+      turns: [{
+        items: [
+          { type: "userMessage", content: [{ type: "text", text: generated }] },
+          { type: "userMessage", content: [{ type: "text", text: "Continue with the real task." }] },
+        ],
+      }],
+    },
+    { maxMessages: 200, maxCharacters: 200_000 },
+  );
+  assert.deepEqual(conversation.messages, [
+    { role: "user", content: "Continue with the real task." },
+  ]);
+});

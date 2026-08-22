@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
@@ -85,4 +87,20 @@ test("keeps the newest messages and character tail when limits are exceeded", ()
   );
   assert.equal(limited.truncated, true);
   assert.deepEqual(limited.messages, [{ role: "user", content: "67890" }]);
+});
+
+test("does not recursively export generated handoff transport text", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-transcript-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const transcriptPath = path.join(directory, "transcript.jsonl");
+  const generated = "<!-- cursor-codex-handoff\nversion: 1\nhandoff-id: old\n-->\n# Handoff";
+  const lines = [
+    { role: "user", message: { content: [{ type: "text", text: generated }] } },
+    { role: "user", message: { content: [{ type: "text", text: "Keep this follow-up." }] } },
+  ];
+  await fs.writeFile(transcriptPath, lines.map((line) => JSON.stringify(line)).join("\n"));
+  const conversation = await parseCursorTranscript(transcriptPath, "id", limits);
+  assert.deepEqual(conversation.messages, [
+    { role: "user", content: "Keep this follow-up." },
+  ]);
 });

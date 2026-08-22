@@ -12,7 +12,7 @@ export interface StoredHandoff {
 export class HandoffFileStore {
   constructor(
     private readonly globalStoragePath: string,
-    private readonly keepCount = 10,
+    private readonly keepCount = 5,
   ) {}
 
   async write(context: HandoffContext): Promise<StoredHandoff> {

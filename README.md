@@ -10,7 +10,32 @@ API key, or install a separate Codex CLI.
 ```text
 Handoff: Cursor → Codex
 Handoff: Codex → Cursor
+Handoff: Reset Sync State
 ```
+
+The two transfer commands are also available as always-visible status bar
+buttons, so normal use does not require opening the Command Palette. Clicking a
+button prepares and attaches the handoff but still never submits a model turn.
+
+## Stateful handoff synchronization
+
+Sync metadata is stored locally under the extension's global storage, never in
+the repository. The first safe transfer is full. Later Codex → Cursor transfers
+may contain only new visible messages, or only repository changes, when the
+source history prefix and the exact receiving Cursor conversation both match
+the previous successful transfer. If nothing changed, no file is created.
+
+The active Codex target thread ID is not exposed reliably by the current public
+extension interface. Cursor → Codex therefore deliberately remains a full
+handoff on every run. Switching sessions, shortened or mutated history,
+missing/corrupt state, or unknown target identity always falls back to full.
+
+Sync state advances only after native attachment succeeds. The clipboard
+fallback is useful for recovery but is not recorded as synchronized. Generated
+Markdown carries inspectable provenance and is excluded from later exports to
+avoid recursive handoff growth. `Handoff: Reset Sync State` deletes only the
+active workspace's bridge metadata; the next transfer in each direction is
+full.
 
 ### Cursor → Codex
 
@@ -57,8 +82,7 @@ npm test
 Package and install directly into Cursor:
 
 ```powershell
-npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository -o cursor-codex-handoff-0.0.4.vsix
-cursor --install-extension .\cursor-codex-handoff-0.0.4.vsix --force
+npm run install:local
 ```
 
 Run `Developer: Reload Window` after installation, then invoke either handoff
@@ -69,6 +93,12 @@ command from the Command Palette.
 - `handoff.maxConversationMessages`: default `200`
 - `handoff.maxConversationCharacters`: default `200000`
 - `handoff.maxDiffBytes`: default `102400`
+- `handoff.maxStoredHandoffs`: default `5`
+
+Generated handoff Markdown is automatically pruned to the configured newest
+file count. Local development packaging overwrites the single
+`cursor-codex-handoff-latest.vsix` artifact instead of accumulating one package
+per version.
 
 Git context is optional. A folder that is not a Git repository can still be
 handed off.
@@ -78,5 +108,15 @@ handed off.
 - Windows-first local milestone
 - No automatic model submission
 - No status bar or keyboard shortcut
-- No history-delta optimization
+- Delta synchronization is currently stronger for Codex → Cursor; Cursor →
+  Codex stays full because the active Codex target thread cannot be proven
 - No undocumented Cursor SQLite conversation source
+
+## Implementation note
+
+Provider adapters still only capture conversations or attach Markdown. The
+provider-independent sync planner sits between capture and rendering, while a
+workspace-scoped atomic state store is updated only after the target adapter
+reports successful attachment. This keeps session discovery in the adapters
+and hashing, full/delta decisions, and repository fingerprints in the handoff
+core.

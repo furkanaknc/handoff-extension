@@ -2,7 +2,7 @@
   "name": "cursor-codex-handoff",
   "displayName": "Cursor Codex Handoff",
   "description": "Transfer conversation and repository context between Cursor Agent and the official Codex extension.",
-  "version": "0.0.4",
+  "version": "0.0.8",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -15,8 +15,10 @@
     "ui"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:handoff.cursorToCodex",
-    "onCommand:handoff.codexToCursor"
+    "onCommand:handoff.codexToCursor",
+    "onCommand:handoff.resetSyncState"
   ],
   "main": "./dist/src/extension.js",
   "contributes": {
@@ -28,6 +30,10 @@
       {
         "command": "handoff.codexToCursor",
         "title": "Handoff: Codex → Cursor"
+      },
+      {
+        "command": "handoff.resetSyncState",
+        "title": "Handoff: Reset Sync State"
       }
     ],
     "configuration": {
@@ -50,6 +56,12 @@
           "default": 102400,
           "minimum": 0,
           "description": "Maximum Git diff size in bytes. Changed files and diff stat remain available when exceeded."
+        },
+        "handoff.maxStoredHandoffs": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "Maximum number of generated Markdown handoff files retained in extension storage."
         }
       }
     }
@@ -58,7 +70,9 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p tsconfig.json",
     "watch": "tsc -w -p tsconfig.json",
-    "test": "npm run compile && node --test \"dist/test/*.test.js\""
+    "test": "npm run compile && node --test \"dist/test/*.test.js\"",
+    "package:local": "npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository -o cursor-codex-handoff-latest.vsix",
+    "install:local": "npm run package:local && cursor --install-extension .\\cursor-codex-handoff-latest.vsix --force"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

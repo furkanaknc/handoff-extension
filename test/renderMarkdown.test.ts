@@ -59,3 +59,23 @@ test("renders Codex source titles and assistant labels", () => {
   assert.match(markdown, /^# Handoff from Codex/m);
   assert.match(markdown, /### Codex\n\nImplemented rotation\./);
 });
+
+test("renders machine-readable provenance and repository-only mode", () => {
+  const value = context({
+    conversation: { id: "thread", messages: [], truncated: false },
+    metadata: {
+      createdAt: "2026-08-22T12:00:00.000Z",
+      handoffId: "handoff-1",
+      mode: "repository-only",
+      sourceSessionId: "thread",
+      targetSessionId: "composer",
+      previousHandoffId: "handoff-0",
+    },
+  });
+  const markdown = renderHandoffMarkdown(value);
+  assert.match(markdown, /^<!-- cursor-codex-handoff\nversion: 1\n/);
+  assert.match(markdown, /mode: repository-only/);
+  assert.match(markdown, /target-session: composer/);
+  assert.match(markdown, /Handoff mode: Repository only/);
+  assert.match(markdown, /No new source conversation messages/);
+});

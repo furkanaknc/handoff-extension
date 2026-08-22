@@ -18,9 +18,34 @@ function labelForRole(
 }
 
 export function renderHandoffMarkdown(context: HandoffContext): string {
+  const mode = context.metadata.mode ?? "full";
+  const modeLabel =
+    mode === "repository-only"
+      ? "Repository only"
+      : `${mode[0].toUpperCase()}${mode.slice(1)}`;
+  const provenance = context.metadata.handoffId
+    ? [
+        "<!-- cursor-codex-handoff",
+        "version: 1",
+        `handoff-id: ${context.metadata.handoffId}`,
+        `mode: ${mode}`,
+        `source: ${context.source}`,
+        `source-session: ${context.metadata.sourceSessionId ?? "unknown"}`,
+        ...(context.metadata.targetSessionId
+          ? [`target-session: ${context.metadata.targetSessionId}`]
+          : []),
+        ...(context.metadata.previousHandoffId
+          ? [`previous-handoff: ${context.metadata.previousHandoffId}`]
+          : []),
+        "-->",
+        "",
+      ]
+    : [];
   const lines: string[] = [
+    ...provenance,
     `# Handoff from ${sourceLabel(context.source)}`,
     "",
+    `Handoff mode: ${modeLabel}`,
     `Workspace: \`${context.workspacePath}\``,
     `Created: ${context.metadata.createdAt}`,
     "",
@@ -30,7 +55,12 @@ export function renderHandoffMarkdown(context: HandoffContext): string {
 
   const conversation = context.conversation;
   if (!conversation || conversation.messages.length === 0) {
-    lines.push("No visible conversation messages were captured.", "");
+    lines.push(
+      mode === "repository-only"
+        ? "No new source conversation messages. Repository state changed since the previous handoff."
+        : "No visible conversation messages were captured.",
+      "",
+    );
   } else {
     if (conversation.id) {
       lines.push(`Conversation ID: \`${conversation.id}\``, "");
