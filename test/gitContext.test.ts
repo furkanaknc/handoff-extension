@@ -12,7 +12,7 @@ function git(cwd: string, ...args: string[]): void {
 
 async function createRepository(): Promise<string> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-git-"));
-  git(directory, "init");
+  git(directory, "init", "-b", "main");
   git(directory, "config", "user.email", "test@example.invalid");
   git(directory, "config", "user.name", "Handoff Test");
   await fs.writeFile(path.join(directory, "tracked.txt"), "first\n", "utf8");
