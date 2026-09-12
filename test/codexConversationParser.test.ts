@@ -29,7 +29,7 @@ test("parses visible Codex messages and ignores internal items", () => {
   assert.equal(conversation.id, "thread-id");
   assert.deepEqual(conversation.messages, [
     { role: "user", content: "Fix it." },
-    { role: "assistant", content: "Inspecting.\n\nFixed.\n\n1. Verify." },
+    { role: "assistant", content: "Fixed." },
   ]);
   assert.doesNotMatch(JSON.stringify(conversation), /private|secret output/);
 });
@@ -71,7 +71,31 @@ test("detects active turns and applies conversation limits", () => {
   });
   assert.equal(conversation.truncated, true);
   assert.deepEqual(conversation.messages, [
-    { role: "assistant", content: "def" },
+    { role: "user", content: "456" },
+  ]);
+});
+
+test("includes commentary and plan items when enabled", () => {
+  const conversation = parseCodexThread(
+    {
+      turns: [
+        {
+          status: "completed",
+          items: [
+            { type: "userMessage", content: [{ type: "text", text: "Fix it." }] },
+            { type: "agentMessage", phase: "commentary", text: "Inspecting." },
+            { type: "agentMessage", phase: "final_answer", text: "Fixed." },
+            { type: "plan", text: "1. Verify." },
+          ],
+        },
+      ],
+    },
+    { maxMessages: 200, maxCharacters: 200_000 },
+    { includeCommentary: true },
+  );
+  assert.deepEqual(conversation.messages, [
+    { role: "user", content: "Fix it." },
+    { role: "assistant", content: "Inspecting.\n\nFixed.\n\n1. Verify." },
   ]);
 });
 

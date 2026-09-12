@@ -20,36 +20,49 @@ function context(overrides: Partial<HandoffContext> = {}): HandoffContext {
       branch: "main",
       changedFiles: ["src/auth.ts"],
       diffStat: "src/auth.ts | 2 ++",
-      diff: "diff --git a/src/auth.ts b/src/auth.ts\n+``` embedded",
-      diffTruncated: false,
     },
     metadata: { createdAt: "2026-08-22T12:00:00.000Z" },
     ...overrides,
   };
 }
 
-test("renders roles, changed files, and a safe diff fence", () => {
+test("renders roles, changed files, and workspace guidance", () => {
   const markdown = renderHandoffMarkdown(context());
   assert.match(markdown, /### User\n\nFix auth\./);
   assert.match(markdown, /### Cursor\n\nImplemented rotation\./);
   assert.match(markdown, /- src\/auth\.ts/);
+  assert.match(markdown, /Inspect the working tree or run `git diff`/);
+  assert.doesNotMatch(markdown, /Workspace: `C:\\\\work\\\\sample`/);
+  assert.doesNotMatch(markdown, /## Git diff/);
+});
+
+test("renders optional full diff when provided", () => {
+  const markdown = renderHandoffMarkdown(
+    context({
+      repository: {
+        head: "abc123",
+        branch: "main",
+        changedFiles: ["src/auth.ts"],
+        diffStat: "src/auth.ts | 2 ++",
+        diff: "diff --git a/src/auth.ts b/src/auth.ts\n+``` embedded",
+        diffTruncated: false,
+      },
+    }),
+  );
   assert.match(markdown, /````diff/);
   assert.match(markdown, /\+``` embedded/);
 });
 
-test("renders conversation and diff truncation notices", () => {
+test("renders conversation truncation notices", () => {
   const value = context();
   value.conversation!.truncated = true;
-  value.repository.diff = undefined;
-  value.repository.diffTruncated = true;
   const markdown = renderHandoffMarkdown(value);
-  assert.match(markdown, /Earlier conversation content was omitted/);
-  assert.match(markdown, /Full Git diff omitted/);
+  assert.match(markdown, /Earlier source conversation omitted from this handoff\./);
 });
 
 test("renders a useful message when Git is unavailable", () => {
   const markdown = renderHandoffMarkdown(
-    context({ repository: { changedFiles: [], diffTruncated: false } }),
+    context({ repository: { changedFiles: [] } }),
   );
   assert.match(markdown, /Git repository not detected/);
 });
@@ -75,7 +88,7 @@ test("renders machine-readable provenance and repository-only mode", () => {
   const markdown = renderHandoffMarkdown(value);
   assert.match(markdown, /^<!-- cursor-codex-handoff\nversion: 1\n/);
   assert.match(markdown, /mode: repository-only/);
-  assert.match(markdown, /target-session: composer/);
+  assert.doesNotMatch(markdown, /target-session: composer/);
   assert.match(markdown, /Handoff mode: Repository only/);
   assert.match(markdown, /No new source conversation messages/);
 });
