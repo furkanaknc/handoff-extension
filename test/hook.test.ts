@@ -144,15 +144,14 @@ test("hook parses UTF-16LE input", () => {
 });
 
 test("normalizes Cursor's slash-prefixed Windows drive paths", () => {
-  if (process.platform !== "win32") {
-    return;
+  const canonical = "c:/work/handoff-ext";
+  assert.equal(normalizeWorkspacePath("/C:/Work/handoff-ext"), canonical);
+  assert.equal(normalizeWorkspacePath("C:\\Work\\handoff-ext"), canonical);
+  assert.equal(normalizeWorkspacePath("c:\\Work\\handoff-ext"), canonical);
+  if (process.platform === "win32") {
+    assert.equal(
+      pointerFileName("/C:/Work/handoff-ext"),
+      pointerFileName("C:\\Work\\handoff-ext"),
+    );
   }
-  assert.equal(
-    normalizeWorkspacePath("/C:/Work/handoff-ext"),
-    normalizeWorkspacePath("C:\\Work\\handoff-ext"),
-  );
-  assert.equal(
-    pointerFileName("/C:/Work/handoff-ext"),
-    pointerFileName("C:\\Work\\handoff-ext"),
-  );
 });

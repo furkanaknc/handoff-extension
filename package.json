@@ -1,10 +1,25 @@
 {
   "name": "cursor-codex-handoff",
   "displayName": "Cursor Codex Handoff",
-  "description": "Transfer conversation and repository context between Cursor Agent and the official Codex extension.",
-  "version": "0.0.12",
-  "publisher": "local",
+  "description": "Transfer conversation and repository context between Cursor Agent and the official Codex extension with bounded, deterministic handoffs.",
+  "version": "0.1.0",
+  "publisher": "handoff-ext",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/handoff-ext/cursor-codex-handoff.git"
+  },
+  "bugs": {
+    "url": "https://github.com/handoff-ext/cursor-codex-handoff/issues"
+  },
+  "homepage": "https://github.com/handoff-ext/cursor-codex-handoff#readme",
+  "keywords": [
+    "cursor",
+    "codex",
+    "handoff",
+    "context",
+    "sync"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -18,6 +33,8 @@
     "onStartupFinished",
     "onCommand:handoff.cursorToCodex",
     "onCommand:handoff.codexToCursor",
+    "onCommand:handoff.previewCursorToCodex",
+    "onCommand:handoff.previewCodexToCursor",
     "onCommand:handoff.resetSyncState",
     "onCommand:handoff.showSyncDiagnostics",
     "onCommand:handoff.openControlCenter"
@@ -32,6 +49,14 @@
       {
         "command": "handoff.codexToCursor",
         "title": "Handoff: Codex → Cursor"
+      },
+      {
+        "command": "handoff.previewCursorToCodex",
+        "title": "Handoff: Preview Cursor → Codex"
+      },
+      {
+        "command": "handoff.previewCodexToCursor",
+        "title": "Handoff: Preview Codex → Cursor"
       },
       {
         "command": "handoff.resetSyncState",
@@ -49,23 +74,55 @@
     "configuration": {
       "title": "Cursor Codex Handoff",
       "properties": {
+        "handoff.maxHandoffTokens": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 500,
+          "description": "Maximum estimated tokens for an outgoing handoff payload."
+        },
+        "handoff.maxConversationTokens": {
+          "type": "number",
+          "default": 4500,
+          "minimum": 500,
+          "description": "Maximum estimated conversation tokens in bootstrap or recovery handoffs."
+        },
         "handoff.maxConversationMessages": {
           "type": "number",
           "default": 200,
           "minimum": 1,
-          "description": "Maximum number of recent visible conversation messages included in a handoff."
+          "description": "Deprecated hard cap on recent messages. Token budgets are preferred."
         },
         "handoff.maxConversationCharacters": {
           "type": "number",
           "default": 200000,
           "minimum": 1000,
-          "description": "Maximum number of recent visible conversation characters included in a handoff."
+          "description": "Deprecated hard cap on recent conversation characters. Token budgets are preferred."
         },
         "handoff.maxDiffBytes": {
           "type": "number",
           "default": 102400,
           "minimum": 0,
-          "description": "Maximum Git diff size in bytes. Changed files and diff stat remain available when exceeded."
+          "description": "Maximum Git diff size in bytes when handoff.includeFullDiff is enabled."
+        },
+        "handoff.includeFullDiff": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include the full Git diff in the model-facing handoff payload."
+        },
+        "handoff.includeCodexCommentary": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include Codex commentary and plan items in addition to final answers."
+        },
+        "handoff.codexRoutingTrust": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "default": "auto",
+          "description": "How strictly to verify Codex thread routing before enabling delta sync."
         },
         "handoff.maxStoredHandoffs": {
           "type": "number",

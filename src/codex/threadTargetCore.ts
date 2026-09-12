@@ -8,7 +8,9 @@ import {
   type SelectableCodexThread,
 } from "./threadCandidates";
 
-const VERIFIED_ROUTING_VERSIONS = new Set(["26.721.30844"]);
+export type CodexRoutingTrust = "auto" | "always" | "never";
+
+const KNOWN_GOOD_ROUTING_VERSIONS = new Set(["26.721.30844"]);
 
 export interface CodexInstallation {
   version: string;
@@ -21,13 +23,18 @@ export interface AppServerLike {
   close(): void;
 }
 
+export type ThreadPickResult =
+  | { kind: "existing"; thread: SelectableCodexThread }
+  | { kind: "new" };
+
 export interface ThreadTargetCoreDependencies {
   resolveInstallation(): Promise<CodexInstallation | undefined>;
   createClient(executablePath: string): AppServerLike;
   pickThread(
     threads: readonly SelectableCodexThread[],
     binding?: SessionBinding,
-  ): Promise<SelectableCodexThread | undefined>;
+  ): Promise<ThreadPickResult | undefined>;
+  openNewChat(): Promise<void>;
   openThread(threadId: string): Promise<boolean>;
   confirmAttachment(label: string): Promise<boolean>;
   warn(message: string): Promise<void>;
@@ -51,8 +58,8 @@ export function codexThreadTitle(thread: SelectableCodexThread): string {
   return "Untitled Codex thread";
 }
 
-export function isVerifiedCodexRoutingVersion(version: string): boolean {
-  return VERIFIED_ROUTING_VERSIONS.has(version);
+export function isKnownGoodCodexRoutingVersion(version: string): boolean {
+  return KNOWN_GOOD_ROUTING_VERSIONS.has(version);
 }
 
 export function codexThreadRoute(
@@ -62,18 +69,83 @@ export function codexThreadRoute(
   return `${uriScheme}://openai.chatgpt/local/${encodeURIComponent(threadId)}`;
 }
 
+export async function probeCodexRoutingCapability(
+  client: AppServerLike,
+  workspacePath: string,
+): Promise<boolean> {
+  try {
+    const listed = await client.request<ThreadListResult>("thread/list", {
+      limit: 5,
+      sortKey: "updated_at",
+      sortDirection: "desc",
+      sourceKinds: ["vscode"],
+      cwd: workspacePath,
+    });
+    const candidates = matchingCodexThreads(listed?.data, workspacePath);
+    if (candidates.length === 0) {
+      return true;
+    }
+    const selected = candidates[0];
+    const read = await client.request<ThreadReadResult>("thread/read", {
+      threadId: selected.id,
+      includeTurns: false,
+    });
+    return (
+      read?.thread !== null &&
+      typeof read?.thread === "object" &&
+      (read.thread as { id?: unknown }).id === selected.id
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function isCodexRoutingVerified(
+  installation: CodexInstallation,
+  workspacePath: string,
+  trust: CodexRoutingTrust,
+  dependencies: ThreadTargetCoreDependencies,
+): Promise<boolean> {
+  if (trust === "never") {
+    return false;
+  }
+  if (trust === "always") {
+    return true;
+  }
+  if (isKnownGoodCodexRoutingVersion(installation.version)) {
+    return true;
+  }
+  const client = dependencies.createClient(installation.executablePath);
+  try {
+    await client.connect();
+    return probeCodexRoutingCapability(client, workspacePath);
+  } catch {
+    return false;
+  } finally {
+    client.close();
+  }
+}
+
 export async function resolveCodexTargetSession(
   workspacePath: string,
   binding: SessionBinding | undefined,
   dependencies: ThreadTargetCoreDependencies,
+  routingTrust: CodexRoutingTrust = "auto",
 ): Promise<ResolvedTargetSession | undefined> {
   const installation = await dependencies.resolveInstallation();
   if (!installation) {
     return undefined;
   }
-  if (!isVerifiedCodexRoutingVersion(installation.version)) {
+
+  const verified = await isCodexRoutingVerified(
+    installation,
+    workspacePath,
+    routingTrust,
+    dependencies,
+  );
+  if (!verified) {
     await dependencies.warn(
-      `Codex ${installation.version} has not been verified for deterministic thread routing. This handoff will remain FULL and will use the active Codex composer.`,
+      `Codex ${installation.version} has not been verified for deterministic thread routing. This handoff will remain bootstrap and will use the active Codex composer.`,
     );
     return undefined;
   }
@@ -91,17 +163,26 @@ export async function resolveCodexTargetSession(
     const candidates = matchingCodexThreads(listed?.data, workspacePath);
     if (candidates.length === 0) {
       await dependencies.warn(
-        "No existing Codex thread was found for this workspace. The active or new Codex composer will receive a FULL handoff; binding remains unverified.",
+        "No existing Codex thread was found for this workspace. The active or new Codex composer will receive a bootstrap handoff; binding remains unverified.",
       );
       return undefined;
     }
-    const selected = await dependencies.pickThread(candidates, binding);
-    if (!selected) {
+    const picked = await dependencies.pickThread(candidates, binding);
+    if (!picked) {
       throw new HandoffError(
         "THREAD_SELECTION_CANCELLED",
         "Codex thread selection was cancelled.",
       );
     }
+    if (picked.kind === "new") {
+      return {
+        id: "",
+        label: "New Codex chat",
+        verificationMethod: "explicit-selection",
+        isNewChat: true,
+      };
+    }
+    const selected = picked.thread;
     const read = await client.request<ThreadReadResult>("thread/read", {
       threadId: selected.id,
       includeTurns: false,
@@ -130,6 +211,16 @@ export async function prepareCodexTargetSession(
   session: ResolvedTargetSession,
   dependencies: ThreadTargetCoreDependencies,
 ): Promise<void> {
+  if (session.isNewChat) {
+    await dependencies.openNewChat();
+    if (!(await dependencies.confirmAttachment(session.label))) {
+      throw new HandoffError(
+        "THREAD_SELECTION_CANCELLED",
+        "Codex handoff attachment was cancelled.",
+      );
+    }
+    return;
+  }
   if (!(await dependencies.openThread(session.id))) {
     throw new HandoffError(
       "CODEX_TRANSFER_FAILED",

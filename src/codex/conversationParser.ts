@@ -7,6 +7,10 @@ import {
 
 const IMAGE_PLACEHOLDER = "[User attached an image; image content was not included in this handoff.]";
 
+export interface CodexParserOptions {
+  includeCommentary?: boolean;
+}
+
 interface CodexItem {
   type?: unknown;
   phase?: unknown;
@@ -15,6 +19,7 @@ interface CodexItem {
 }
 
 interface CodexTurn {
+  id?: unknown;
   status?: unknown;
   items?: unknown;
 }
@@ -66,6 +71,22 @@ function userText(item: CodexItem): string | undefined {
     : undefined;
 }
 
+function shouldIncludeAgentItem(
+  item: CodexItem,
+  includeCommentary: boolean,
+): boolean {
+  if (item.type === "plan") {
+    return includeCommentary;
+  }
+  if (item.type !== "agentMessage" || typeof item.text !== "string") {
+    return false;
+  }
+  if (item.phase === undefined || item.phase === "final_answer") {
+    return true;
+  }
+  return includeCommentary && item.phase === "commentary";
+}
+
 export function codexThreadHasActiveTurn(value: unknown): boolean {
   if (value === null || typeof value !== "object") {
     return false;
@@ -85,6 +106,7 @@ export function codexThreadHasActiveTurn(value: unknown): boolean {
 export function parseCodexThread(
   value: unknown,
   limits: TranscriptLimits,
+  options: CodexParserOptions = {},
 ): Conversation {
   if (value === null || typeof value !== "object") {
     return { messages: [], truncated: false };
@@ -92,14 +114,17 @@ export function parseCodexThread(
   const thread = value as CodexThread;
   const messages: HandoffMessage[] = [];
   const turns = Array.isArray(thread.turns) ? thread.turns : [];
+  let lastTurnId: string | undefined;
 
   for (const turnValue of turns) {
     if (turnValue === null || typeof turnValue !== "object") {
       continue;
     }
-    const items = Array.isArray((turnValue as CodexTurn).items)
-      ? ((turnValue as CodexTurn).items as unknown[])
-      : [];
+    const turn = turnValue as CodexTurn;
+    if (typeof turn.id === "string") {
+      lastTurnId = turn.id;
+    }
+    const items = Array.isArray(turn.items) ? turn.items : [];
     for (const itemValue of items) {
       if (itemValue === null || typeof itemValue !== "object") {
         continue;
@@ -110,24 +135,8 @@ export function parseCodexThread(
         if (content) {
           appendOrCoalesce(messages, { role: "user", content });
         }
-      } else if (
-        item.type === "agentMessage" &&
-        typeof item.text === "string" &&
-        item.text.trim().length > 0 &&
-        (item.phase === undefined ||
-          item.phase === "commentary" ||
-          item.phase === "final_answer")
-      ) {
-        const content = stripGeneratedHandoffReferences(item.text);
-        if (content && !isGeneratedHandoffText(content)) {
-          appendOrCoalesce(messages, { role: "assistant", content });
-        }
-      } else if (
-        item.type === "plan" &&
-        typeof item.text === "string" &&
-        item.text.trim().length > 0
-      ) {
-        const content = stripGeneratedHandoffReferences(item.text);
+      } else if (shouldIncludeAgentItem(item, options.includeCommentary === true)) {
+        const content = stripGeneratedHandoffReferences(item.text as string);
         if (content && !isGeneratedHandoffText(content)) {
           appendOrCoalesce(messages, { role: "assistant", content });
         }
@@ -140,5 +149,6 @@ export function parseCodexThread(
     id: typeof thread.id === "string" ? thread.id : undefined,
     messages: limited.messages,
     truncated: limited.truncated,
+    lastTurnId,
   };
 }

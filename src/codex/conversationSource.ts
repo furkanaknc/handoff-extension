@@ -1,12 +1,12 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import * as vscode from "vscode";
 import { HandoffError } from "../handoff/errors";
 import type { CodexConversationSource, Conversation } from "../handoff/types";
 import { CodexAppServerClient } from "./appServerClient";
+import { resolveCodexExecutable } from "./codexInstallation";
 import {
   codexThreadHasActiveTurn,
   parseCodexThread,
+  type CodexParserOptions,
 } from "./conversationParser";
 import type { TranscriptLimits } from "../cursor/transcriptParser";
 import {
@@ -44,7 +44,10 @@ function updatedDescription(thread: ThreadSummary): string | undefined {
 export class OfficialCodexConversationSource
   implements CodexConversationSource
 {
-  constructor(private readonly limits: TranscriptLimits) {}
+  constructor(
+    private readonly limits: TranscriptLimits,
+    private readonly parserOptions: CodexParserOptions = {},
+  ) {}
 
   async getCurrentConversation(workspacePath: string): Promise<Conversation> {
     const extension = vscode.extensions.getExtension(CODEX_EXTENSION_ID);
@@ -56,25 +59,11 @@ export class OfficialCodexConversationSource
     }
     await extension.activate();
 
-    if (process.platform !== "win32") {
-      throw new HandoffError(
-        "CODEX_APP_SERVER_MISSING",
-        "This milestone currently supports the bundled Windows Codex app-server only.",
-      );
-    }
-    const executablePath = path.join(
-      extension.extensionPath,
-      "bin",
-      "windows-x86_64",
-      "codex.exe",
-    );
-    try {
-      await fs.access(executablePath);
-    } catch (error) {
+    const executablePath = await resolveCodexExecutable(extension.extensionPath);
+    if (!executablePath) {
       throw new HandoffError(
         "CODEX_APP_SERVER_MISSING",
         "The installed Codex extension does not contain its bundled app-server.",
-        { cause: error },
       );
     }
 
@@ -129,7 +118,11 @@ export class OfficialCodexConversationSource
           "Codex is still responding in the selected thread. Wait for it to finish, then retry.",
         );
       }
-      const conversation = parseCodexThread(read?.thread, this.limits);
+      const conversation = parseCodexThread(
+        read?.thread,
+        this.limits,
+        this.parserOptions,
+      );
       if (conversation.messages.length === 0) {
         throw new HandoffError(
           "CONVERSATION_EMPTY",

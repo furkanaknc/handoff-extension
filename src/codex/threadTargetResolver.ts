@@ -1,10 +1,9 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import * as vscode from "vscode";
 import type {
   ResolvedTargetSession,
   SessionBinding,
 } from "../handoff/types";
+import { resolveCodexExecutable } from "./codexInstallation";
 import { CodexAppServerClient } from "./appServerClient";
 import type { SelectableCodexThread } from "./threadCandidates";
 import {
@@ -13,10 +12,14 @@ import {
   prepareCodexTargetSession,
   resolveCodexTargetSession,
   type CodexInstallation,
+  type CodexRoutingTrust,
+  type ThreadPickResult,
   type ThreadTargetCoreDependencies,
 } from "./threadTargetCore";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
+const NEW_CHAT_COMMAND = "chatgpt.newChat";
+const OPEN_SIDEBAR_COMMAND = "chatgpt.openSidebar";
 const ATTACH_ACTION = "Attach handoff";
 
 function updatedDescription(thread: SelectableCodexThread): string | undefined {
@@ -27,47 +30,74 @@ function updatedDescription(thread: SelectableCodexThread): string | undefined {
 
 async function defaultInstallation(): Promise<CodexInstallation | undefined> {
   const extension = vscode.extensions.getExtension(CODEX_EXTENSION_ID);
-  if (!extension || process.platform !== "win32") {
+  if (!extension) {
     return undefined;
   }
   await extension.activate();
-  const executablePath = path.join(
-    extension.extensionPath,
-    "bin",
-    "windows-x86_64",
-    "codex.exe",
-  );
-  try {
-    await fs.access(executablePath);
-  } catch {
+  const executablePath = await resolveCodexExecutable(extension.extensionPath);
+  if (!executablePath) {
     return undefined;
   }
   return { version: extension.packageJSON.version as string, executablePath };
+}
+
+function readRoutingTrust(): CodexRoutingTrust {
+  const configured = vscode.workspace
+    .getConfiguration("handoff")
+    .get<string>("codexRoutingTrust", "auto");
+  if (configured === "always" || configured === "never") {
+    return configured;
+  }
+  return "auto";
 }
 
 const defaultDependencies: ThreadTargetCoreDependencies = {
   resolveInstallation: defaultInstallation,
   createClient: (executablePath) => new CodexAppServerClient(executablePath),
   async pickThread(threads, binding) {
-    const picked = await vscode.window.showQuickPick(
-      threads.map((thread) => ({
-        label: codexThreadTitle(thread),
-        description:
-          binding?.codexThreadId === thread.id
-            ? "$(link) Current binding"
-            : updatedDescription(thread),
-        detail:
-          binding?.codexThreadId === thread.id
-            ? updatedDescription(thread)
-            : undefined,
-        thread,
-      })),
+    type ThreadPickItem = vscode.QuickPickItem & {
+      pick: ThreadPickResult;
+    };
+    const picked = await vscode.window.showQuickPick<ThreadPickItem>(
+      [
+        {
+          label: "$(add) Start new Codex chat",
+          description: "Open a fresh thread for this bootstrap handoff",
+          pick: { kind: "new" },
+        },
+        ...threads.map((thread) => ({
+          label: codexThreadTitle(thread),
+          description:
+            binding?.codexThreadId === thread.id
+              ? "$(link) Current binding"
+              : updatedDescription(thread),
+          detail:
+            binding?.codexThreadId === thread.id
+              ? updatedDescription(thread)
+              : undefined,
+          pick: { kind: "existing" as const, thread },
+        })),
+      ],
       {
         title: "Select the Codex thread for this Cursor handoff",
-        placeHolder: "The selected thread will be opened before attachment",
+        placeHolder: "Choose a new chat or an existing thread",
       },
     );
-    return picked?.thread;
+    return picked?.pick;
+  },
+  async openNewChat() {
+    const extension = vscode.extensions.getExtension(CODEX_EXTENSION_ID);
+    if (extension) {
+      await extension.activate();
+    }
+    const commands = await vscode.commands.getCommands(true);
+    if (commands.includes(NEW_CHAT_COMMAND)) {
+      await vscode.commands.executeCommand(NEW_CHAT_COMMAND);
+      return;
+    }
+    if (commands.includes(OPEN_SIDEBAR_COMMAND)) {
+      await vscode.commands.executeCommand(OPEN_SIDEBAR_COMMAND);
+    }
   },
   async openThread(threadId) {
     return vscode.env.openExternal(
@@ -97,7 +127,12 @@ export class CodexThreadTargetResolver {
     workspacePath: string,
     binding?: SessionBinding,
   ): Promise<ResolvedTargetSession | undefined> {
-    return resolveCodexTargetSession(workspacePath, binding, this.dependencies);
+    return resolveCodexTargetSession(
+      workspacePath,
+      binding,
+      this.dependencies,
+      readRoutingTrust(),
+    );
   }
 
   prepareTargetSession(session: ResolvedTargetSession): Promise<void> {

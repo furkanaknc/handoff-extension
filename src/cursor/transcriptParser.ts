@@ -3,6 +3,8 @@ import readline from "node:readline";
 import type { Conversation, HandoffMessage, HandoffRole } from "../handoff/types";
 import {
   isGeneratedHandoffText,
+  sanitizeHandoffMessageContent,
+  stripCursorTransportNoise,
   stripGeneratedHandoffReferences,
 } from "../handoff/provenance";
 
@@ -16,6 +18,15 @@ interface TranscriptEvent {
   message?: {
     content?: unknown;
   };
+}
+
+function eventHasToolUse(content: readonly unknown[]): boolean {
+  return content.some(
+    (item) =>
+      item !== null &&
+      typeof item === "object" &&
+      (item as { type?: unknown }).type === "tool_use",
+  );
 }
 
 function visibleTextFromEvent(event: TranscriptEvent): HandoffMessage | undefined {
@@ -39,7 +50,12 @@ function visibleTextFromEvent(event: TranscriptEvent): HandoffMessage | undefine
     .filter((value) => value.trim().length > 0)
     .join("\n\n");
 
-  const sanitized = stripGeneratedHandoffReferences(text);
+  const sanitized = stripGeneratedHandoffReferences(
+    stripCursorTransportNoise(text, {
+      accompaniedByToolUse:
+        event.role === "assistant" && eventHasToolUse(content),
+    }),
+  );
   return sanitized.length > 0 && !isGeneratedHandoffText(sanitized)
     ? { role: event.role as HandoffRole, content: sanitized }
     : undefined;
@@ -51,9 +67,15 @@ function appendOrCoalesce(
 ): void {
   const previous = messages.at(-1);
   if (previous?.role === message.role) {
-    previous.content = `${previous.content}\n\n${message.content}`;
+    previous.content = sanitizeHandoffMessageContent(
+      message.role,
+      `${previous.content}\n\n${message.content}`,
+    );
   } else {
-    messages.push(message);
+    messages.push({
+      ...message,
+      content: sanitizeHandoffMessageContent(message.role, message.content),
+    });
   }
 }
 
@@ -88,10 +110,12 @@ export async function parseCursorTranscript(
   limits: TranscriptLimits,
 ): Promise<Conversation> {
   const messages: HandoffMessage[] = [];
+  let rawOffset = 0;
   const input = createReadStream(transcriptPath, { encoding: "utf8" });
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
 
   for await (const line of lines) {
+    rawOffset += Buffer.byteLength(line, "utf8") + 1;
     if (line.trim().length === 0) {
       continue;
     }
@@ -108,10 +132,17 @@ export async function parseCursorTranscript(
     }
   }
 
-  const limited = applyConversationLimits(messages, limits);
+  const sanitizedMessages = messages
+    .map((message) => ({
+      ...message,
+      content: sanitizeHandoffMessageContent(message.role, message.content),
+    }))
+    .filter((message) => message.content.length > 0);
+  const limited = applyConversationLimits(sanitizedMessages, limits);
   return {
     id: conversationId,
     messages: limited.messages,
     truncated: limited.truncated,
+    rawOffset,
   };
 }

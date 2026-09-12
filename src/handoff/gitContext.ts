@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import type { GitContext } from "./types";
+import type { RepositorySnapshot } from "./types";
 
 const execFileAsync = promisify(execFile);
 
@@ -34,16 +35,17 @@ async function runGitWithRetry(
   return undefined;
 }
 
-async function runGitCapped(
+async function hashGitOutput(
   workspacePath: string,
   args: string[],
   maxBytes: number,
-): Promise<{ output?: string; truncated: boolean }> {
+): Promise<{ diffHash?: string; diff?: string; diffTruncated: boolean }> {
   if (maxBytes <= 0) {
-    return { truncated: true };
+    return { diffTruncated: true };
   }
 
   return new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
     const child = spawn("git", args, {
       cwd: workspacePath,
       windowsHide: true,
@@ -68,6 +70,7 @@ async function runGitCapped(
     }, 15_000);
 
     child.stdout.on("data", (chunk: Buffer) => {
+      hash.update(chunk);
       if (truncated) {
         return;
       }
@@ -75,7 +78,6 @@ async function runGitCapped(
       if (byteLength > maxBytes) {
         truncated = true;
         chunks.length = 0;
-        child.kill();
         return;
       }
       chunks.push(chunk);
@@ -91,13 +93,15 @@ async function runGitCapped(
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
+      const diffHash = hash.digest("hex");
       if (truncated) {
-        finish(() => resolve({ truncated: true }));
+        finish(() => resolve({ diffHash, diffTruncated: true }));
       } else if (code === 0) {
         finish(() =>
           resolve({
-            output: Buffer.concat(chunks).toString("utf8").trimEnd(),
-            truncated: false,
+            diffHash,
+            diff: Buffer.concat(chunks).toString("utf8").trimEnd() || undefined,
+            diffTruncated: false,
           }),
         );
       } else {
@@ -131,8 +135,9 @@ function parseChangedFiles(status: string): string[] {
 export async function getGitContext(
   workspacePath: string,
   maxDiffBytes: number,
-): Promise<GitContext> {
-  const empty: GitContext = {
+  includeFullDiff = false,
+): Promise<RepositorySnapshot> {
+  const empty: RepositorySnapshot = {
     changedFiles: [],
     diffTruncated: false,
   };
@@ -149,19 +154,23 @@ export async function getGitContext(
     runGitWithRetry(workspacePath, ["rev-parse", "HEAD"]),
     runGitWithRetry(workspacePath, ["branch", "--show-current"]),
     runGitWithRetry(workspacePath, ["status", "--porcelain=v1"]),
-    runGitWithRetry(workspacePath, ["diff", "--stat", "--no-ext-diff", "--"]),
+    runGitWithRetry(workspacePath, ["diff", "--stat", "HEAD", "--no-ext-diff", "--"]),
   ]);
 
+  let diffHash: string | undefined;
   let diff: string | undefined;
   let diffTruncated = false;
   try {
-    const result = await runGitCapped(
+    const result = await hashGitOutput(
       workspacePath,
-      ["diff", "--no-ext-diff", "--unified=3", "--"],
-      maxDiffBytes,
+      ["diff", "HEAD", "--no-ext-diff", "--unified=3", "--"],
+      includeFullDiff ? maxDiffBytes : Number.MAX_SAFE_INTEGER,
     );
-    diff = result.output || undefined;
-    diffTruncated = result.truncated;
+    diffHash = result.diffHash;
+    diffTruncated = result.diffTruncated;
+    if (includeFullDiff) {
+      diff = result.diff;
+    }
   } catch {
     diffTruncated = true;
   }
@@ -171,6 +180,7 @@ export async function getGitContext(
     branch: branch || undefined,
     changedFiles: parseChangedFiles(status ?? ""),
     diffStat: diffStat || undefined,
+    diffHash,
     diff,
     diffTruncated,
   };

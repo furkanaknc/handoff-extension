@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   codexThreadRoute,
+  isKnownGoodCodexRoutingVersion,
   prepareCodexTargetSession,
+  probeCodexRoutingCapability,
   resolveCodexTargetSession,
   type ThreadTargetCoreDependencies,
 } from "../src/codex/threadTargetCore";
@@ -38,8 +40,9 @@ function dependencies(
       };
     },
     async pickThread(threads) {
-      return threads[0];
+      return { kind: "existing", thread: threads[0] };
     },
+    async openNewChat() {},
     async openThread() {
       return true;
     },
@@ -59,7 +62,7 @@ test("resolves and verifies a workspace-scoped explicitly selected thread", asyn
     dependencies({
       async pickThread(threads) {
         candidates = threads.length;
-        return threads[0];
+        return { kind: "existing", thread: threads[0] };
       },
     }),
   );
@@ -75,7 +78,14 @@ test("resolves and verifies a workspace-scoped explicitly selected thread", asyn
   );
 });
 
-test("falls back to an unverified target for unsupported Codex versions", async () => {
+test("probes routing capability for unknown Codex versions", async () => {
+  const client = dependencies().createClient("codex.exe");
+  await client.connect();
+  assert.equal(await probeCodexRoutingCapability(client, "C:\\work"), true);
+  client.close();
+});
+
+test("falls back to an unverified target when routing trust is never", async () => {
   let warned = false;
   const result = await resolveCodexTargetSession(
     "C:\\work",
@@ -88,9 +98,29 @@ test("falls back to an unverified target for unsupported Codex versions", async 
         warned = true;
       },
     }),
+    "never",
   );
   assert.equal(result, undefined);
   assert.equal(warned, true);
+});
+
+test("allows unknown versions when routing trust is always", async () => {
+  const result = await resolveCodexTargetSession(
+    "C:\\work",
+    undefined,
+    dependencies({
+      async resolveInstallation() {
+        return { version: "99.0.0", executablePath: "codex.exe" };
+      },
+    }),
+    "always",
+  );
+  assert.equal(result?.id, "X1");
+});
+
+test("treats inspected version as known-good", () => {
+  assert.equal(isKnownGoodCodexRoutingVersion("26.721.30844"), true);
+  assert.equal(isKnownGoodCodexRoutingVersion("99.0.0"), false);
 });
 
 test("reports selection cancellation and a stale selected thread", async () => {
@@ -122,6 +152,30 @@ test("reports selection cancellation and a stale selected thread", async () => {
     ),
     /no longer exists/,
   );
+});
+
+test("opens a new Codex chat when requested", async () => {
+  let openedNewChat = false;
+  const result = await resolveCodexTargetSession(
+    "C:\\work",
+    undefined,
+    dependencies({
+      async pickThread() {
+        return { kind: "new" };
+      },
+      async openNewChat() {
+        openedNewChat = true;
+      },
+    }),
+  );
+  assert.deepEqual(result, {
+    id: "",
+    label: "New Codex chat",
+    verificationMethod: "explicit-selection",
+    isNewChat: true,
+  });
+  await prepareCodexTargetSession(result!, dependencies({ async openNewChat() { openedNewChat = true; } }));
+  assert.equal(openedNewChat, true);
 });
 
 test("requires the selected thread to open and receive explicit confirmation", async () => {
