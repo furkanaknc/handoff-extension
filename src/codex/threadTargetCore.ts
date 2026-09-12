@@ -23,13 +23,18 @@ export interface AppServerLike {
   close(): void;
 }
 
+export type ThreadPickResult =
+  | { kind: "existing"; thread: SelectableCodexThread }
+  | { kind: "new" };
+
 export interface ThreadTargetCoreDependencies {
   resolveInstallation(): Promise<CodexInstallation | undefined>;
   createClient(executablePath: string): AppServerLike;
   pickThread(
     threads: readonly SelectableCodexThread[],
     binding?: SessionBinding,
-  ): Promise<SelectableCodexThread | undefined>;
+  ): Promise<ThreadPickResult | undefined>;
+  openNewChat(): Promise<void>;
   openThread(threadId: string): Promise<boolean>;
   confirmAttachment(label: string): Promise<boolean>;
   warn(message: string): Promise<void>;
@@ -162,13 +167,22 @@ export async function resolveCodexTargetSession(
       );
       return undefined;
     }
-    const selected = await dependencies.pickThread(candidates, binding);
-    if (!selected) {
+    const picked = await dependencies.pickThread(candidates, binding);
+    if (!picked) {
       throw new HandoffError(
         "THREAD_SELECTION_CANCELLED",
         "Codex thread selection was cancelled.",
       );
     }
+    if (picked.kind === "new") {
+      return {
+        id: "",
+        label: "New Codex chat",
+        verificationMethod: "explicit-selection",
+        isNewChat: true,
+      };
+    }
+    const selected = picked.thread;
     const read = await client.request<ThreadReadResult>("thread/read", {
       threadId: selected.id,
       includeTurns: false,
@@ -197,6 +211,16 @@ export async function prepareCodexTargetSession(
   session: ResolvedTargetSession,
   dependencies: ThreadTargetCoreDependencies,
 ): Promise<void> {
+  if (session.isNewChat) {
+    await dependencies.openNewChat();
+    if (!(await dependencies.confirmAttachment(session.label))) {
+      throw new HandoffError(
+        "THREAD_SELECTION_CANCELLED",
+        "Codex handoff attachment was cancelled.",
+      );
+    }
+    return;
+  }
   if (!(await dependencies.openThread(session.id))) {
     throw new HandoffError(
       "CODEX_TRANSFER_FAILED",
