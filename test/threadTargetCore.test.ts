@@ -40,8 +40,9 @@ function dependencies(
       };
     },
     async pickThread(threads) {
-      return threads[0];
+      return { kind: "existing", thread: threads[0] };
     },
+    async openNewChat() {},
     async openThread() {
       return true;
     },
@@ -61,7 +62,7 @@ test("resolves and verifies a workspace-scoped explicitly selected thread", asyn
     dependencies({
       async pickThread(threads) {
         candidates = threads.length;
-        return threads[0];
+        return { kind: "existing", thread: threads[0] };
       },
     }),
   );
@@ -151,6 +152,30 @@ test("reports selection cancellation and a stale selected thread", async () => {
     ),
     /no longer exists/,
   );
+});
+
+test("opens a new Codex chat when requested", async () => {
+  let openedNewChat = false;
+  const result = await resolveCodexTargetSession(
+    "C:\\work",
+    undefined,
+    dependencies({
+      async pickThread() {
+        return { kind: "new" };
+      },
+      async openNewChat() {
+        openedNewChat = true;
+      },
+    }),
+  );
+  assert.deepEqual(result, {
+    id: "",
+    label: "New Codex chat",
+    verificationMethod: "explicit-selection",
+    isNewChat: true,
+  });
+  await prepareCodexTargetSession(result!, dependencies({ async openNewChat() { openedNewChat = true; } }));
+  assert.equal(openedNewChat, true);
 });
 
 test("requires the selected thread to open and receive explicit confirmation", async () => {

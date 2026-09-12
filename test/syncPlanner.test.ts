@@ -90,7 +90,8 @@ test("uses repository-only mode when only repository state changed", () => {
   if (result.status === "handoff") {
     assert.equal(result.plan.mode, "repository-only");
     assert.deepEqual(result.plan.messages, []);
-    assert.equal(result.plan.repository?.changedFiles[0], "src/new.ts");
+    assert.deepEqual(result.plan.repository?.changedFiles, []);
+    assert.equal(result.plan.repository?.branch, repository.branch);
   }
 });
 

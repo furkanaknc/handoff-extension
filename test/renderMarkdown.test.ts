@@ -26,12 +26,15 @@ function context(overrides: Partial<HandoffContext> = {}): HandoffContext {
   };
 }
 
-test("renders roles, changed files, and workspace guidance", () => {
+test("renders roles, branch metadata, and workspace guidance", () => {
   const markdown = renderHandoffMarkdown(context());
   assert.match(markdown, /### User\n\nFix auth\./);
   assert.match(markdown, /### Cursor\n\nImplemented rotation\./);
-  assert.match(markdown, /- src\/auth\.ts/);
+  assert.match(markdown, /Branch: `main`/);
+  assert.match(markdown, /HEAD: `abc123`/);
   assert.match(markdown, /Inspect the working tree or run `git diff`/);
+  assert.doesNotMatch(markdown, /- src\/auth\.ts/);
+  assert.doesNotMatch(markdown, /### Diff stat/);
   assert.doesNotMatch(markdown, /Workspace: `C:\\\\work\\\\sample`/);
   assert.doesNotMatch(markdown, /## Git diff/);
 });
