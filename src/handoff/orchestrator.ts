@@ -102,10 +102,11 @@ export async function performSynchronizedHandoff(
     options.workspacePath,
     memory.sessionBinding,
   );
-  const targetSessionId =
-    targetSession?.id ??
-    (await (options.getTargetSessionId?.(options.workspacePath) ??
-      Promise.resolve(undefined)));
+  const targetSessionId = targetSession?.isNewChat
+    ? undefined
+    : (targetSession?.id ??
+      (await (options.getTargetSessionId?.(options.workspacePath) ??
+        Promise.resolve(undefined))));
   const createdAt = (options.now ?? (() => new Date()))().toISOString();
   const handoffId = (options.createHandoffId ?? randomUUID)();
   const previousState = memory[options.direction];
@@ -113,6 +114,7 @@ export async function performSynchronizedHandoff(
   const continuityVerified =
     options.direction === "cursorToCodex"
       ? targetSession !== undefined &&
+        !targetSession.isNewChat &&
         conversation.id !== undefined &&
         binding?.cursorConversationId === conversation.id &&
         binding.codexThreadId === targetSession.id &&
@@ -168,8 +170,10 @@ export async function performSynchronizedHandoff(
   if (targetResult === false) {
     return { status: "manual-transfer", context, messageCount: plan.messages.length };
   }
-  let nextBinding: SessionBinding | undefined;
-  if (
+  let nextBinding: SessionBinding | undefined | null;
+  if (options.direction === "cursorToCodex" && targetSession?.isNewChat) {
+    nextBinding = binding ? null : undefined;
+  } else if (
     options.direction === "cursorToCodex" &&
     targetSession &&
     conversation.id

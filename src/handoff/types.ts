@@ -103,6 +103,7 @@ export interface ResolvedTargetSession {
   id: string;
   label: string;
   verificationMethod: SessionBindingVerificationMethod;
+  isNewChat?: boolean;
 }
 
 export interface HandoffManifest {
@@ -173,7 +174,7 @@ export interface SyncStateStore {
     workspacePath: string,
     direction: HandoffDirection,
     state: DirectionSyncState,
-    sessionBinding?: SessionBinding,
+    sessionBinding?: SessionBinding | null,
     manifest?: HandoffManifest,
   ): Promise<void>;
 }

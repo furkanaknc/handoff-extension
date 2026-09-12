@@ -53,8 +53,7 @@ export function toRepositoryHandoffPayload(
   return {
     branch: repository.branch,
     head: repository.head,
-    changedFiles: [...repository.changedFiles],
-    diffStat: repository.diffStat,
+    changedFiles: [],
     ...(includeFullDiff && repository.diff
       ? { diff: repository.diff, diffTruncated: repository.diffTruncated }
       : {}),

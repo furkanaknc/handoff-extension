@@ -86,8 +86,6 @@ export function renderHandoffMarkdown(context: HandoffContext): string {
     const hasRepositoryData =
       repository.head !== undefined ||
       repository.branch !== undefined ||
-      repository.changedFiles.length > 0 ||
-      repository.diffStat !== undefined ||
       repository.diff !== undefined;
 
     if (!hasRepositoryData) {
@@ -98,16 +96,6 @@ export function renderHandoffMarkdown(context: HandoffContext): string {
       }
       if (repository.head) {
         lines.push(`HEAD: \`${repository.head}\``, "");
-      }
-      lines.push("### Changed files", "");
-      if (repository.changedFiles.length === 0) {
-        lines.push("No changed files.", "");
-      } else {
-        lines.push(...repository.changedFiles.map((file) => `- ${file}`), "");
-      }
-      if (repository.diffStat) {
-        const fence = codeFence(repository.diffStat);
-        lines.push("### Diff stat", "", `${fence}text`, repository.diffStat, fence, "");
       }
       if (repository.diffTruncated) {
         lines.push(

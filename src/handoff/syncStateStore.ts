@@ -210,12 +210,14 @@ export class FileSyncStateStore {
     workspacePath: string,
     direction: HandoffDirection,
     state: DirectionSyncState,
-    sessionBinding?: SessionBinding,
+    sessionBinding?: SessionBinding | null,
     manifest?: HandoffManifest,
   ): Promise<void> {
     const memory = await this.load(workspacePath);
     memory[direction] = state;
-    if (sessionBinding) {
+    if (sessionBinding === null) {
+      delete memory.sessionBinding;
+    } else if (sessionBinding) {
       memory.sessionBinding = sessionBinding;
     }
     if (manifest) {
