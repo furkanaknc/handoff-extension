@@ -87,6 +87,18 @@ async function showSyncResult(
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  if (
+    vscode.workspace.getConfiguration("handoff").get<boolean>("autoInstallHook", true)
+  ) {
+    void ensureCursorHookInstalled(context).then((result) => {
+      if (result === "installed") {
+        void vscode.window.showInformationMessage(
+          "Cursor hook installed. Send one message in Cursor Chat before your first handoff.",
+        );
+      }
+    });
+  }
+
   const syncStateStore = new FileSyncStateStore(
     context.globalStorageUri.fsPath,
     () => {
@@ -142,12 +154,6 @@ export function activate(context: vscode.ExtensionContext): void {
       try {
         const hookResult = await ensureCursorHookInstalled(context);
         if (hookResult === "cancelled") {
-          return;
-        }
-        if (hookResult === "installed") {
-          await vscode.window.showInformationMessage(
-            "Cursor hook installed. Send one message in Cursor Chat, then run Handoff: Cursor → Codex again.",
-          );
           return;
         }
 

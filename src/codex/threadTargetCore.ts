@@ -3,12 +3,14 @@ import type {
   SessionBinding,
 } from "../handoff/types";
 import { HandoffError } from "../handoff/errors";
+import { hashWorkspacePath } from "../handoff/syncStateStore";
 import {
   matchingCodexThreads,
   type SelectableCodexThread,
 } from "./threadCandidates";
 
 export type CodexRoutingTrust = "auto" | "always" | "never";
+export type CodexTargetPreference = "bound" | "new" | "active" | "ask";
 
 const KNOWN_GOOD_ROUTING_VERSIONS = new Set(["26.721.30844"]);
 
@@ -40,12 +42,94 @@ export interface ThreadTargetCoreDependencies {
   warn(message: string): Promise<void>;
 }
 
+export interface ResolveCodexTargetSessionOptions {
+  routingTrust?: CodexRoutingTrust;
+  preference?: CodexTargetPreference;
+}
+
 interface ThreadListResult {
   data?: unknown;
 }
 
 interface ThreadReadResult {
   thread?: unknown;
+}
+
+interface ThreadStartResult {
+  thread?: { id?: unknown; name?: unknown; preview?: unknown };
+}
+
+function threadFromReadResult(read: ThreadReadResult | undefined): {
+  id: string;
+  name?: unknown;
+  preview?: unknown;
+} | undefined {
+  if (
+    read?.thread === null ||
+    typeof read?.thread !== "object" ||
+    typeof (read.thread as { id?: unknown }).id !== "string"
+  ) {
+    return undefined;
+  }
+  const thread = read.thread as {
+    id: string;
+    name?: unknown;
+    preview?: unknown;
+  };
+  return thread;
+}
+
+async function verifyThreadReadable(
+  client: AppServerLike,
+  threadId: string,
+): Promise<ReturnType<typeof threadFromReadResult>> {
+  const read = await client.request<ThreadReadResult>("thread/read", {
+    threadId,
+    includeTurns: false,
+  });
+  const thread = threadFromReadResult(read);
+  return thread?.id === threadId ? thread : undefined;
+}
+
+async function startNewCodexThread(
+  client: AppServerLike,
+  workspacePath: string,
+): Promise<ResolvedTargetSession | undefined> {
+  try {
+    const started = await client.request<ThreadStartResult>("thread/start", {
+      cwd: workspacePath,
+      ephemeral: false,
+    });
+    const newId =
+      typeof started?.thread?.id === "string" ? started.thread.id : undefined;
+    if (!newId) {
+      return undefined;
+    }
+    const verified = await verifyThreadReadable(client, newId);
+    if (!verified) {
+      return undefined;
+    }
+    return {
+      id: newId,
+      label: codexThreadTitle({
+        id: newId,
+        name: started.thread?.name,
+        preview: started.thread?.preview,
+      }),
+      verificationMethod: "explicit-selection",
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function newChatFallbackSession(): ResolvedTargetSession {
+  return {
+    id: "",
+    label: "New Codex chat",
+    verificationMethod: "explicit-selection",
+    isNewChat: true,
+  };
 }
 
 export function codexThreadTitle(thread: SelectableCodexThread): string {
@@ -86,15 +170,7 @@ export async function probeCodexRoutingCapability(
       return true;
     }
     const selected = candidates[0];
-    const read = await client.request<ThreadReadResult>("thread/read", {
-      threadId: selected.id,
-      includeTurns: false,
-    });
-    return (
-      read?.thread !== null &&
-      typeof read?.thread === "object" &&
-      (read.thread as { id?: unknown }).id === selected.id
-    );
+    return (await verifyThreadReadable(client, selected.id)) !== undefined;
   } catch {
     return false;
   }
@@ -126,12 +202,46 @@ export async function isCodexRoutingVerified(
   }
 }
 
+async function resolveBoundThreadSession(
+  client: AppServerLike,
+  workspacePath: string,
+  binding: SessionBinding,
+  candidates: readonly SelectableCodexThread[],
+): Promise<ResolvedTargetSession | undefined> {
+  if (binding.workspaceHash !== hashWorkspacePath(workspacePath)) {
+    return undefined;
+  }
+  const listed = candidates.find((thread) => thread.id === binding.codexThreadId);
+  const verified = await verifyThreadReadable(client, binding.codexThreadId);
+  if (!verified) {
+    return undefined;
+  }
+  return {
+    id: binding.codexThreadId,
+    label: listed
+      ? codexThreadTitle(listed)
+      : codexThreadTitle({
+          id: binding.codexThreadId,
+          name: verified.name,
+          preview: verified.preview,
+        }),
+    verificationMethod: "active-state",
+  };
+}
+
 export async function resolveCodexTargetSession(
   workspacePath: string,
   binding: SessionBinding | undefined,
   dependencies: ThreadTargetCoreDependencies,
-  routingTrust: CodexRoutingTrust = "auto",
+  options: ResolveCodexTargetSessionOptions = {},
 ): Promise<ResolvedTargetSession | undefined> {
+  const routingTrust = options.routingTrust ?? "auto";
+  const preference = options.preference ?? "bound";
+
+  if (preference === "active") {
+    return undefined;
+  }
+
   const installation = await dependencies.resolveInstallation();
   if (!installation) {
     return undefined;
@@ -153,6 +263,12 @@ export async function resolveCodexTargetSession(
   const client = dependencies.createClient(installation.executablePath);
   try {
     await client.connect();
+
+    if (preference === "new") {
+      const started = await startNewCodexThread(client, workspacePath);
+      return started ?? newChatFallbackSession();
+    }
+
     const listed = await client.request<ThreadListResult>("thread/list", {
       limit: 100,
       sortKey: "updated_at",
@@ -161,12 +277,26 @@ export async function resolveCodexTargetSession(
       cwd: workspacePath,
     });
     const candidates = matchingCodexThreads(listed?.data, workspacePath);
-    if (candidates.length === 0) {
+
+    if (preference === "bound" && binding) {
+      const boundSession = await resolveBoundThreadSession(
+        client,
+        workspacePath,
+        binding,
+        candidates,
+      );
+      if (boundSession) {
+        return boundSession;
+      }
+    }
+
+    if (candidates.length === 0 && preference === "bound") {
       await dependencies.warn(
         "No existing Codex thread was found for this workspace. The active or new Codex composer will receive a bootstrap handoff; binding remains unverified.",
       );
       return undefined;
     }
+
     const picked = await dependencies.pickThread(candidates, binding);
     if (!picked) {
       throw new HandoffError(
@@ -175,23 +305,12 @@ export async function resolveCodexTargetSession(
       );
     }
     if (picked.kind === "new") {
-      return {
-        id: "",
-        label: "New Codex chat",
-        verificationMethod: "explicit-selection",
-        isNewChat: true,
-      };
+      const started = await startNewCodexThread(client, workspacePath);
+      return started ?? newChatFallbackSession();
     }
     const selected = picked.thread;
-    const read = await client.request<ThreadReadResult>("thread/read", {
-      threadId: selected.id,
-      includeTurns: false,
-    });
-    if (
-      read?.thread === null ||
-      typeof read?.thread !== "object" ||
-      (read.thread as { id?: unknown }).id !== selected.id
-    ) {
+    const readThread = await verifyThreadReadable(client, selected.id);
+    if (!readThread) {
       throw new HandoffError(
         "CODEX_THREAD_NOT_FOUND",
         "The selected Codex thread no longer exists. Retry and choose another thread.",
@@ -210,10 +329,14 @@ export async function resolveCodexTargetSession(
 export async function prepareCodexTargetSession(
   session: ResolvedTargetSession,
   dependencies: ThreadTargetCoreDependencies,
+  skipConfirmation = false,
 ): Promise<void> {
   if (session.isNewChat) {
     await dependencies.openNewChat();
-    if (!(await dependencies.confirmAttachment(session.label))) {
+    if (
+      !skipConfirmation &&
+      !(await dependencies.confirmAttachment(session.label))
+    ) {
       throw new HandoffError(
         "THREAD_SELECTION_CANCELLED",
         "Codex handoff attachment was cancelled.",
@@ -227,7 +350,10 @@ export async function prepareCodexTargetSession(
       "The selected Codex thread could not be opened.",
     );
   }
-  if (!(await dependencies.confirmAttachment(session.label))) {
+  if (
+    !skipConfirmation &&
+    !(await dependencies.confirmAttachment(session.label))
+  ) {
     throw new HandoffError(
       "THREAD_SELECTION_CANCELLED",
       "Codex handoff attachment was cancelled.",

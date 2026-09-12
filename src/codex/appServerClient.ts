@@ -14,6 +14,18 @@ interface RpcMessage {
   error?: { message?: unknown };
 }
 
+/** Align with Codex extension clientInfo so threads classify as vscode source. */
+function codexAppServerClientName(): string {
+  const appName = process.env.VSCODE_APPNAME ?? "";
+  if (appName.toLowerCase().includes("cursor")) {
+    return "Cursor";
+  }
+  if (appName.toLowerCase().includes("windsurf")) {
+    return "Windsurf";
+  }
+  return "cursor_codex_handoff";
+}
+
 export class CodexAppServerClient {
   private process: ChildProcessWithoutNullStreams | undefined;
   private readonly pending = new Map<number, PendingRequest>();
@@ -24,6 +36,7 @@ export class CodexAppServerClient {
     private readonly executablePath: string,
     private readonly executableArgs: string[] = ["app-server"],
     private readonly timeoutMs = 15_000,
+    private readonly clientVersion = "0.1.1",
   ) {}
 
   async connect(): Promise<void> {
@@ -57,9 +70,12 @@ export class CodexAppServerClient {
 
     await this.request("initialize", {
       clientInfo: {
-        name: "cursor_codex_handoff",
+        name: codexAppServerClientName(),
         title: "Cursor Codex Handoff",
-        version: "0.0.12",
+        version: this.clientVersion,
+      },
+      capabilities: {
+        experimentalApi: true,
       },
     });
     this.notify("initialized", {});
