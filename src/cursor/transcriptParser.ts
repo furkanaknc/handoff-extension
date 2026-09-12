@@ -88,10 +88,12 @@ export async function parseCursorTranscript(
   limits: TranscriptLimits,
 ): Promise<Conversation> {
   const messages: HandoffMessage[] = [];
+  let rawOffset = 0;
   const input = createReadStream(transcriptPath, { encoding: "utf8" });
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
 
   for await (const line of lines) {
+    rawOffset += Buffer.byteLength(line, "utf8") + 1;
     if (line.trim().length === 0) {
       continue;
     }
@@ -113,5 +115,6 @@ export async function parseCursorTranscript(
     id: conversationId,
     messages: limited.messages,
     truncated: limited.truncated,
+    rawOffset,
   };
 }

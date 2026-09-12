@@ -19,6 +19,7 @@ test("parses normal user and assistant messages in order", async () => {
   );
   assert.equal(conversation.id, "conversation-1");
   assert.equal(conversation.truncated, false);
+  assert.ok((conversation.rawOffset ?? 0) > 0);
   assert.deepEqual(
     conversation.messages.map(({ role, content }) => [role, content]),
     [
