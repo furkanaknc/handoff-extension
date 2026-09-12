@@ -1,10 +1,9 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import * as vscode from "vscode";
 import type {
   ResolvedTargetSession,
   SessionBinding,
 } from "../handoff/types";
+import { resolveCodexExecutable } from "./codexInstallation";
 import { CodexAppServerClient } from "./appServerClient";
 import type { SelectableCodexThread } from "./threadCandidates";
 import {
@@ -13,6 +12,7 @@ import {
   prepareCodexTargetSession,
   resolveCodexTargetSession,
   type CodexInstallation,
+  type CodexRoutingTrust,
   type ThreadTargetCoreDependencies,
 } from "./threadTargetCore";
 
@@ -27,22 +27,25 @@ function updatedDescription(thread: SelectableCodexThread): string | undefined {
 
 async function defaultInstallation(): Promise<CodexInstallation | undefined> {
   const extension = vscode.extensions.getExtension(CODEX_EXTENSION_ID);
-  if (!extension || process.platform !== "win32") {
+  if (!extension) {
     return undefined;
   }
   await extension.activate();
-  const executablePath = path.join(
-    extension.extensionPath,
-    "bin",
-    "windows-x86_64",
-    "codex.exe",
-  );
-  try {
-    await fs.access(executablePath);
-  } catch {
+  const executablePath = await resolveCodexExecutable(extension.extensionPath);
+  if (!executablePath) {
     return undefined;
   }
   return { version: extension.packageJSON.version as string, executablePath };
+}
+
+function readRoutingTrust(): CodexRoutingTrust {
+  const configured = vscode.workspace
+    .getConfiguration("handoff")
+    .get<string>("codexRoutingTrust", "auto");
+  if (configured === "always" || configured === "never") {
+    return configured;
+  }
+  return "auto";
 }
 
 const defaultDependencies: ThreadTargetCoreDependencies = {
@@ -97,7 +100,12 @@ export class CodexThreadTargetResolver {
     workspacePath: string,
     binding?: SessionBinding,
   ): Promise<ResolvedTargetSession | undefined> {
-    return resolveCodexTargetSession(workspacePath, binding, this.dependencies);
+    return resolveCodexTargetSession(
+      workspacePath,
+      binding,
+      this.dependencies,
+      readRoutingTrust(),
+    );
   }
 
   prepareTargetSession(session: ResolvedTargetSession): Promise<void> {
