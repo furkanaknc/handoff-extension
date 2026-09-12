@@ -298,6 +298,43 @@ test("preview mode does not call the target or advance sync state", async () => 
   assert.equal(store.saves, 0);
 });
 
+test("creates a binding when a thread/start target id is returned on the first handoff", async () => {
+  const store = memoryStore();
+  let messages: HandoffMessage[] = [{ role: "user", content: "A" }];
+  const modes: Array<string | undefined> = [];
+  const options = {
+    workspacePath: "workspace",
+    direction: "cursorToCodex" as const,
+    sourceKind: "cursor" as const,
+    source: {
+      async getCurrentConversation() {
+        return { id: "C1", truncated: false, messages };
+      },
+    },
+    target: {
+      async sendHandoff(context: HandoffContext) {
+        modes.push(context.metadata.mode);
+        return true;
+      },
+    },
+    getRepositoryContext: async () => ({ changedFiles: [], diffTruncated: false }),
+    syncStateStore: store,
+    runtime,
+    resolveTargetSession: async () => ({
+      id: "NEW1",
+      label: "New Codex chat",
+      verificationMethod: "explicit-selection" as const,
+    }),
+    now: () => new Date("2026-08-22T14:00:00.000Z"),
+  };
+
+  await performSynchronizedHandoff(options);
+  assert.equal(store.memory.sessionBinding?.codexThreadId, "NEW1");
+  messages = [...messages, { role: "assistant", content: "B" }];
+  await performSynchronizedHandoff(options);
+  assert.deepEqual(modes, ["bootstrap", "delta"]);
+});
+
 test("does not persist a new binding when Cursor to Codex attachment fails", async () => {
   const store = memoryStore();
   await assert.rejects(
