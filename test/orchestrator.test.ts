@@ -13,6 +13,12 @@ import type {
   WorkspaceMemory,
 } from "../src/handoff/types";
 
+const runtime = {
+  includeFullDiff: false,
+  maxHandoffTokens: 6000,
+  maxConversationTokens: 4500,
+};
+
 test("builds structured context and sends it to the target", async () => {
   const source: CursorConversationSource = {
     async getCurrentConversation(workspacePath) {
@@ -36,7 +42,6 @@ test("builds structured context and sends it to the target", async () => {
     source,
     target,
     async () => ({
-      branch: "main",
       changedFiles: ["src/file.ts"],
       diffTruncated: false,
     }),
@@ -95,7 +100,7 @@ test("does not call the target when conversation capture fails", async () => {
   assert.equal(called, false);
 });
 
-function memoryStore(initial: WorkspaceMemory = { version: 2 }) {
+function memoryStore(initial: WorkspaceMemory = { version: 3 }) {
   let memory = initial;
   let saves = 0;
   return {
@@ -107,12 +112,16 @@ function memoryStore(initial: WorkspaceMemory = { version: 2 }) {
       direction: "cursorToCodex" | "codexToCursor",
       state: any,
       sessionBinding?: any,
+      manifest?: any,
     ) {
       saves++;
       memory = {
         ...memory,
         [direction]: state,
         ...(sessionBinding ? { sessionBinding } : {}),
+        ...(manifest
+          ? { recentManifests: [manifest, ...(memory.recentManifests ?? [])] }
+          : {}),
       };
     },
     get memory() {
@@ -142,6 +151,7 @@ test("advances sync state only after a successful target transfer", async () => 
     source,
     getRepositoryContext: async () => ({ changedFiles: [], diffTruncated: false }),
     syncStateStore: store,
+    runtime,
     getTargetSessionId: async () => "composer",
     now: () => new Date("2026-08-22T13:00:00.000Z"),
     createHandoffId: () => "handoff",
@@ -162,7 +172,7 @@ test("advances sync state only after a successful target transfer", async () => 
   });
   assert.equal(result.status, "transferred");
   assert.equal(store.saves, 1);
-  assert.equal(store.memory.codexToCursor?.transferredMessageCount, 1);
+  assert.ok(store.memory.codexToCursor?.sourceCheckpoint);
 });
 
 test("skips target invocation when source and repository are synchronized", async () => {
@@ -185,6 +195,7 @@ test("skips target invocation when source and repository are synchronized", asyn
     target: { async sendHandoff() { calls++; return true; } },
     getRepositoryContext: async () => ({ changedFiles: [], diffTruncated: false }),
     syncStateStore: firstStore,
+    runtime,
     getTargetSessionId: async () => "composer",
     now: () => new Date("2026-08-22T13:00:00.000Z"),
     createHandoffId: () => "handoff",
@@ -209,13 +220,14 @@ test("manual fallback does not advance sync state", async () => {
     target: { async sendHandoff() { return false; } },
     getRepositoryContext: async () => ({ changedFiles: [], diffTruncated: false }),
     syncStateStore: store,
+    runtime,
     getTargetSessionId: async () => "composer",
   });
   assert.equal(result.status, "manual-transfer");
   assert.equal(store.saves, 0);
 });
 
-test("creates a binding after FULL and uses DELTA only for the verified same pair", async () => {
+test("creates a binding after bootstrap and uses delta only for the verified same pair", async () => {
   const store = memoryStore();
   let messages: HandoffMessage[] = [{ role: "user", content: "A" }];
   const modes: Array<string | undefined> = [];
@@ -236,6 +248,7 @@ test("creates a binding after FULL and uses DELTA only for the verified same pai
     },
     getRepositoryContext: async () => ({ changedFiles: [], diffTruncated: false }),
     syncStateStore: store,
+    runtime,
     resolveTargetSession: async () => ({
       id: "X1",
       label: "Thread X1",
@@ -249,7 +262,40 @@ test("creates a binding after FULL and uses DELTA only for the verified same pai
   assert.equal(store.memory.sessionBinding?.codexThreadId, "X1");
   messages = [...messages, { role: "assistant", content: "B" }];
   await performSynchronizedHandoff(options);
-  assert.deepEqual(modes, ["full", "delta"]);
+  assert.deepEqual(modes, ["bootstrap", "delta"]);
+});
+
+test("preview mode does not call the target or advance sync state", async () => {
+  const store = memoryStore();
+  let called = false;
+  const result = await performSynchronizedHandoff({
+    workspacePath: "workspace",
+    direction: "codexToCursor",
+    sourceKind: "codex",
+    source: {
+      async getCurrentConversation() {
+        return {
+          id: "thread",
+          truncated: false,
+          messages: [{ role: "user", content: "A" }],
+        };
+      },
+    },
+    target: {
+      async sendHandoff() {
+        called = true;
+        return true;
+      },
+    },
+    getRepositoryContext: async () => ({ changedFiles: [], diffTruncated: false }),
+    syncStateStore: store,
+    runtime,
+    dryRun: true,
+    getTargetSessionId: async () => "composer",
+  });
+  assert.equal(result.status, "preview");
+  assert.equal(called, false);
+  assert.equal(store.saves, 0);
 });
 
 test("does not persist a new binding when Cursor to Codex attachment fails", async () => {
@@ -271,6 +317,7 @@ test("does not persist a new binding when Cursor to Codex attachment fails", asy
       target: { async sendHandoff() { throw new Error("attach failed"); } },
       getRepositoryContext: async () => ({ changedFiles: [], diffTruncated: false }),
       syncStateStore: store,
+      runtime,
       resolveTargetSession: async () => ({
         id: "X1",
         label: "Thread X1",

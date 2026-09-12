@@ -36,7 +36,7 @@ for (const [mode, code] of [
   ["crash", "CODEX_APP_SERVER_FAILED"],
 ] as const) {
   test(`reports ${mode} app-server responses`, async (t) => {
-    const appServer = client(mode, 100);
+    const appServer = client(mode, mode === "malformed" ? 500 : 100);
     t.after(() => appServer.close());
     await appServer.connect();
     await assert.rejects(

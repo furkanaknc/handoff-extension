@@ -5,9 +5,11 @@ import type {
   CodexTarget,
   CursorConversationSource,
   CursorTarget,
-  GitContext,
   HandoffContext,
   HandoffDirection,
+  HandoffManifest,
+  HandoffMode,
+  RepositorySnapshot,
   ResolvedTargetSession,
   SessionBinding,
   SyncStateStore,
@@ -16,15 +18,23 @@ import { hashWorkspacePath } from "./syncStateStore";
 
 export type GitContextProvider = (
   workspacePath: string,
-) => Promise<GitContext>;
+) => Promise<RepositorySnapshot>;
 
 export type SynchronizedHandoffResult =
   | { status: "already-synchronized" }
   | {
-      status: "transferred" | "manual-transfer";
+      status: "transferred" | "manual-transfer" | "preview";
       context: HandoffContext;
       messageCount: number;
     };
+
+export interface HandoffRuntimeOptions {
+  includeFullDiff: boolean;
+  maxHandoffTokens: number;
+  maxConversationTokens: number;
+  legacyMessageCap?: number;
+  legacyCharacterCap?: number;
+}
 
 interface SynchronizedHandoffOptions {
   workspacePath: string;
@@ -34,13 +44,50 @@ interface SynchronizedHandoffOptions {
   target: CodexTarget | CursorTarget;
   getRepositoryContext: GitContextProvider;
   syncStateStore: SyncStateStore;
+  runtime: HandoffRuntimeOptions;
   getTargetSessionId?: (workspacePath: string) => Promise<string | undefined>;
   resolveTargetSession?: (
     workspacePath: string,
     binding?: SessionBinding,
   ) => Promise<ResolvedTargetSession | undefined>;
+  dryRun?: boolean;
   now?: () => Date;
   createHandoffId?: () => string;
+}
+
+function modeDescription(mode: HandoffMode | undefined, messageCount: number): string {
+  switch (mode) {
+    case "repository-only":
+      return "repository changes handed off";
+    case "delta":
+      return `${messageCount} new message${messageCount === 1 ? "" : "s"} handed off`;
+    case "recovery":
+      return "bounded recovery context synchronized";
+    default:
+      return "bootstrap context synchronized";
+  }
+}
+
+export function describeHandoffResult(
+  direction: "Cursor → Codex" | "Codex → Cursor",
+  result: SynchronizedHandoffResult,
+): string {
+  if (result.status === "already-synchronized") {
+    return `${direction}: target already has the current source context.`;
+  }
+  if (result.status === "preview") {
+    const stats = result.context.metadata.stats;
+    const avoided =
+      stats !== undefined
+        ? Math.max(0, stats.sourceEstimatedTokens - stats.outgoingEstimatedTokens)
+        : 0;
+    return `${direction}: preview ${stats?.outgoingEstimatedTokens ?? "?"} tokens (~${avoided} avoided).`;
+  }
+  const detail = modeDescription(result.context.metadata.mode, result.messageCount);
+  const stats = result.context.metadata.stats;
+  const tokenSummary =
+    stats !== undefined ? ` (~${stats.outgoingEstimatedTokens} tokens)` : "";
+  return `${direction}: ${detail}${tokenSummary}.`;
 }
 
 export async function performSynchronizedHandoff(
@@ -79,6 +126,11 @@ export async function performSynchronizedHandoff(
     continuityVerified,
     handoffId,
     createdAt,
+    includeFullDiff: options.runtime.includeFullDiff,
+    maxHandoffTokens: options.runtime.maxHandoffTokens,
+    maxConversationTokens: options.runtime.maxConversationTokens,
+    legacyMessageCap: options.runtime.legacyMessageCap,
+    legacyCharacterCap: options.runtime.legacyCharacterCap,
   });
   if (result.status === "already-synchronized") {
     return result;
@@ -91,7 +143,9 @@ export async function performSynchronizedHandoff(
     conversation: {
       id: conversation.id,
       messages: plan.messages,
-      truncated: plan.mode === "full" && conversation.truncated,
+      truncated: plan.messages.length < conversation.messages.length || conversation.truncated,
+      rawOffset: conversation.rawOffset,
+      lastTurnId: conversation.lastTurnId,
     },
     repository: plan.repository,
     metadata: {
@@ -101,9 +155,14 @@ export async function performSynchronizedHandoff(
       sourceSessionId: conversation.id,
       targetSessionId,
       previousHandoffId:
-        plan.mode === "full" ? undefined : previousState?.lastHandoffId,
+        plan.mode === "bootstrap" ? undefined : previousState?.lastHandoffId,
+      stats: plan.stats,
     },
   };
+
+  if (options.dryRun) {
+    return { status: "preview", context, messageCount: plan.messages.length };
+  }
 
   const targetResult = await options.target.sendHandoff(context, targetSession);
   if (targetResult === false) {
@@ -128,11 +187,21 @@ export async function performSynchronizedHandoff(
       verificationMethod: targetSession.verificationMethod,
     };
   }
+  const manifest: HandoffManifest = {
+    handoffId,
+    direction: options.direction,
+    mode: plan.mode,
+    createdAt,
+    stats: plan.stats,
+    sourceSessionId: conversation.id,
+    targetSessionId,
+  };
   await options.syncStateStore.commitSuccessfulTransfer(
     options.workspacePath,
     options.direction,
     plan.nextSyncState,
     nextBinding,
+    manifest,
   );
   return { status: "transferred", context, messageCount: plan.messages.length };
 }
@@ -153,7 +222,14 @@ export async function performCursorToCodexHandoff(
     source: "cursor",
     workspacePath,
     conversation,
-    repository,
+    repository: {
+      branch: repository.branch,
+      head: repository.head,
+      changedFiles: repository.changedFiles,
+      diffStat: repository.diffStat,
+      diff: repository.diff,
+      diffTruncated: repository.diffTruncated,
+    },
     metadata: { createdAt: now().toISOString() },
   };
 
@@ -177,7 +253,14 @@ export async function performCodexToCursorHandoff(
     source: "codex",
     workspacePath,
     conversation,
-    repository,
+    repository: {
+      branch: repository.branch,
+      head: repository.head,
+      changedFiles: repository.changedFiles,
+      diffStat: repository.diffStat,
+      diff: repository.diff,
+      diffTruncated: repository.diffTruncated,
+    },
     metadata: { createdAt: now().toISOString() },
   };
 
