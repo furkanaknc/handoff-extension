@@ -47,7 +47,7 @@ export function hasOwnedHandoffHooks(config: CursorHooksConfig): boolean {
     return false;
   }
   const hooks: Record<string, unknown> = config.hooks;
-  return HANDOFF_HOOK_EVENTS.every((eventName) => {
+  return HANDOFF_HOOK_EVENTS.some((eventName) => {
     const entries = hooks[eventName];
     return (
       Array.isArray(entries) &&
@@ -89,4 +89,28 @@ export function mergeHandoffHooks(
   }
 
   return { ...config, version: 1, hooks };
+}
+
+export function removeHandoffHooks(config: CursorHooksConfig): CursorHooksConfig {
+  if (!isObject(config.hooks)) {
+    return { ...config };
+  }
+  const hooks: Record<string, unknown> = { ...config.hooks };
+  for (const [eventName, value] of Object.entries(hooks)) {
+    if (!Array.isArray(value)) {
+      continue;
+    }
+    const remaining = value.filter(
+      (entry) =>
+        !isObject(entry) ||
+        typeof entry.command !== "string" ||
+        !entry.command.includes(HOOK_MARKER),
+    );
+    if (remaining.length === 0) {
+      delete hooks[eventName];
+    } else {
+      hooks[eventName] = remaining;
+    }
+  }
+  return { ...config, hooks };
 }

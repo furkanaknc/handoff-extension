@@ -8,10 +8,12 @@ import {
   hasOwnedHandoffHooks,
   HOOK_MARKER,
   mergeHandoffHooks,
+  removeHandoffHooks,
   type CursorHooksConfig,
 } from "./hookConfig";
 
 export type HookInstallResult = "ready" | "installed" | "cancelled";
+export type HookIntegrationStatus = "ready" | "repair-needed" | "not-installed";
 
 function quote(value: string): string {
   if (value.includes('"')) {
@@ -25,6 +27,27 @@ function buildHookCommand(
   stateDirectory: string,
 ): string {
   return `node ${quote(hookScriptPath)} ${HOOK_MARKER} --state-dir ${quote(stateDirectory)}`;
+}
+
+function hookLocations(context: vscode.ExtensionContext): {
+  cursorDirectory: string;
+  configPath: string;
+  command: string;
+} {
+  const cursorDirectory = path.join(os.homedir(), ".cursor");
+  const configPath = path.join(cursorDirectory, "hooks.json");
+  const stateDirectory = path.join(
+    context.globalStorageUri.fsPath,
+    "cursor-pointers",
+  );
+  const hookScriptPath = context.asAbsolutePath(
+    path.join("dist", "src", "cursor", "cursorHook.js"),
+  );
+  return {
+    cursorDirectory,
+    configPath,
+    command: buildHookCommand(hookScriptPath, stateDirectory),
+  };
 }
 
 async function readConfig(configPath: string): Promise<{
@@ -58,16 +81,7 @@ export async function ensureCursorHookInstalled(
   context: vscode.ExtensionContext,
   now: () => Date = () => new Date(),
 ): Promise<HookInstallResult> {
-  const cursorDirectory = path.join(os.homedir(), ".cursor");
-  const configPath = path.join(cursorDirectory, "hooks.json");
-  const stateDirectory = path.join(
-    context.globalStorageUri.fsPath,
-    "cursor-pointers",
-  );
-  const hookScriptPath = context.asAbsolutePath(
-    path.join("dist", "src", "cursor", "cursorHook.js"),
-  );
-  const command = buildHookCommand(hookScriptPath, stateDirectory);
+  const { cursorDirectory, configPath, command } = hookLocations(context);
   const { config, original } = await readConfig(configPath);
   const isRepair = hasOwnedHandoffHooks(config);
 
@@ -107,4 +121,39 @@ export async function ensureCursorHookInstalled(
   await fs.writeFile(temporaryPath, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
   await fs.rename(temporaryPath, configPath);
   return isRepair ? "ready" : "installed";
+}
+
+export async function checkCursorHookIntegration(
+  context: vscode.ExtensionContext,
+): Promise<HookIntegrationStatus> {
+  const { configPath, command } = hookLocations(context);
+  const { config } = await readConfig(configPath);
+  if (hasCurrentHandoffHooks(config, command)) {
+    return "ready";
+  }
+  return hasOwnedHandoffHooks(config) ? "repair-needed" : "not-installed";
+}
+
+export async function removeCursorHookIntegration(
+  context: vscode.ExtensionContext,
+  now: () => Date = () => new Date(),
+): Promise<boolean> {
+  const { cursorDirectory, configPath } = hookLocations(context);
+  const { config, original } = await readConfig(configPath);
+  if (!hasOwnedHandoffHooks(config)) {
+    return false;
+  }
+  await fs.mkdir(cursorDirectory, { recursive: true });
+  if (original !== undefined) {
+    const backupPath = `${configPath}.handoff-backup-${backupSuffix(now())}.json`;
+    await fs.writeFile(backupPath, original, "utf8");
+  }
+  const temporaryPath = `${configPath}.${process.pid}.remove.tmp`;
+  await fs.writeFile(
+    temporaryPath,
+    `${JSON.stringify(removeHandoffHooks(config), null, 2)}\n`,
+    "utf8",
+  );
+  await fs.rename(temporaryPath, configPath);
+  return true;
 }

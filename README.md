@@ -5,6 +5,18 @@ repository state between Cursor Agent and the official OpenAI Codex extension.
 It does not add a chat UI, invoke a routing model, require an API key, or
 install a separate Codex CLI.
 
+## Install
+
+1. Download the latest `.vsix` from
+   [GitHub Releases](https://github.com/furkanaknc/handoff-extension/releases).
+2. Open Cursor or VS Code.
+3. Run **Extensions: Install from VSIX...** from the Command Palette.
+4. Select the downloaded file, then reload the editor window.
+
+The official OpenAI Codex extension must be installed for Codex transfers.
+On first Cursor → Codex use, Handoff asks permission to install a local Cursor
+hook that records only the active conversation ID and transcript path.
+
 ## Commands
 
 ```text
@@ -15,6 +27,9 @@ Handoff: Preview Codex → Cursor
 Handoff: Reset Sync State
 Handoff: Show Sync Diagnostics
 Handoff: Open Control Center
+Handoff: Check Integration
+Handoff: Repair Integration
+Handoff: Remove Integration / Hooks
 ```
 
 The status-bar `Handoff` button opens a control center with binding state,
@@ -97,6 +112,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 - With `handoff.codexTarget: bound` (default), repeat handoffs reuse the stored Cursor conversation ↔ Codex thread pair when `thread/read` confirms the thread still exists.
 - Threads created via app-server may not appear immediately in `thread/list`; bound selection uses `thread/read` as a fallback.
 - Reset binding via **Handoff: Reset Sync State** or the Control Center.
+
+### Concurrent editor windows
+
+- Handoffs and state resets are serialized per workspace inside one Extension Host.
+- Do not run Handoff for the same physical workspace from multiple independent
+  Cursor/VS Code windows at the same time.
 
 ## Implementation note
 

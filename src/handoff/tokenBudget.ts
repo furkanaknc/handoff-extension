@@ -53,15 +53,31 @@ export function buildConversationWithinBudget(
   const selected: HandoffMessage[] = [];
   let usedTokens = 0;
   let index = messages.length - 1;
+  let contentTruncated = false;
 
   while (index >= 0) {
     const message = messages[index];
     const messageTokens = estimateMessageTokens(message, estimator);
 
     if (selected.length === 0 && messageTokens > budget) {
-      const truncatedContent = `[Message truncated]\n\n${message.content.slice(-budget * 4)}`;
+      const prefix = "[Message truncated]\n\n";
+      let low = 0;
+      let high = message.content.length;
+      let truncatedContent = prefix;
+      while (low <= high) {
+        const length = Math.floor((low + high) / 2);
+        const suffix = length === 0 ? "" : message.content.slice(-length);
+        const candidate = `${prefix}${suffix}`;
+        if (estimator.estimate(candidate) <= budget) {
+          truncatedContent = candidate;
+          low = length + 1;
+        } else {
+          high = length - 1;
+        }
+      }
       selected.unshift({ role: message.role, content: truncatedContent });
       usedTokens = estimator.estimate(truncatedContent);
+      contentTruncated = true;
       index -= 1;
       break;
     }
@@ -81,7 +97,7 @@ export function buildConversationWithinBudget(
 
   const messagesIncluded = selected.length;
   const messagesOmitted = messages.length - messagesIncluded;
-  const truncated = messagesOmitted > 0;
+  const truncated = messagesOmitted > 0 || contentTruncated;
 
   return {
     messages: selected,

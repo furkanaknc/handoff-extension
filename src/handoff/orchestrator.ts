@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { planHandoff } from "./syncPlanner";
+import { toRepositoryHandoffPayload } from "./syncPlanner";
 import type {
   CodexConversationSource,
   CodexTarget,
@@ -15,6 +16,8 @@ import type {
   SyncStateStore,
 } from "./types";
 import { hashWorkspacePath } from "./syncStateStore";
+import { handoffWorkspaceOperations } from "./workspaceOperationQueue";
+import { finalizeHandoffWithinBudget } from "./boundedHandoff";
 
 export type GitContextProvider = (
   workspacePath: string,
@@ -93,10 +96,21 @@ export function describeHandoffResult(
 export async function performSynchronizedHandoff(
   options: SynchronizedHandoffOptions,
 ): Promise<SynchronizedHandoffResult> {
-  const [conversation, repository, memory] = await Promise.all([
-    options.source.getCurrentConversation(options.workspacePath),
+  return handoffWorkspaceOperations.runExclusive(options.workspacePath, () =>
+    performSynchronizedHandoffExclusive(options),
+  );
+}
+
+async function performSynchronizedHandoffExclusive(
+  options: SynchronizedHandoffOptions,
+): Promise<SynchronizedHandoffResult> {
+  const memory = await options.syncStateStore.load(options.workspacePath);
+  const [conversation, repository] = await Promise.all([
+    options.source.getCurrentConversation(
+      options.workspacePath,
+      memory.sessionBinding,
+    ),
     options.getRepositoryContext(options.workspacePath),
-    options.syncStateStore.load(options.workspacePath),
   ]);
   const targetSession = await options.resolveTargetSession?.(
     options.workspacePath,
@@ -119,7 +133,11 @@ export async function performSynchronizedHandoff(
         binding?.cursorConversationId === conversation.id &&
         binding.codexThreadId === targetSession.id &&
         binding.workspaceHash === hashWorkspacePath(options.workspacePath)
-      : targetSessionId !== undefined;
+      : targetSessionId !== undefined &&
+        conversation.id !== undefined &&
+        binding?.cursorConversationId === targetSessionId &&
+        binding.codexThreadId === conversation.id &&
+        binding.workspaceHash === hashWorkspacePath(options.workspacePath);
   const result = planHandoff({
     conversation,
     repository,
@@ -139,13 +157,13 @@ export async function performSynchronizedHandoff(
   }
 
   const { plan } = result;
-  const context: HandoffContext = {
+  const candidateContext: HandoffContext = {
     source: options.sourceKind,
     workspacePath: options.workspacePath,
     conversation: {
       id: conversation.id,
       messages: plan.messages,
-      truncated: plan.messages.length < conversation.messages.length || conversation.truncated,
+      truncated: plan.historyTruncated,
       rawOffset: conversation.rawOffset,
       lastTurnId: conversation.lastTurnId,
     },
@@ -161,14 +179,38 @@ export async function performSynchronizedHandoff(
       stats: plan.stats,
     },
   };
+  const context = finalizeHandoffWithinBudget(
+    candidateContext,
+    options.runtime.maxHandoffTokens,
+    undefined,
+    {
+      messages: conversation.messages,
+      repository: toRepositoryHandoffPayload(
+        repository,
+        options.runtime.includeFullDiff,
+      ),
+      sourceHistoryTruncated: conversation.truncated,
+      force: plan.mode === "delta" && plan.stats.messagesOmitted > 0,
+    },
+  );
+  const finalizedMode = context.metadata.mode ?? plan.mode;
+  plan.nextSyncState.lastMode = finalizedMode;
 
   if (options.dryRun) {
-    return { status: "preview", context, messageCount: plan.messages.length };
+    return {
+      status: "preview",
+      context,
+      messageCount: context.conversation?.messages.length ?? 0,
+    };
   }
 
   const targetResult = await options.target.sendHandoff(context, targetSession);
   if (targetResult === false) {
-    return { status: "manual-transfer", context, messageCount: plan.messages.length };
+    return {
+      status: "manual-transfer",
+      context,
+      messageCount: context.conversation?.messages.length ?? 0,
+    };
   }
   let nextBinding: SessionBinding | undefined | null;
   if (options.direction === "cursorToCodex" && targetSession?.isNewChat) {
@@ -190,13 +232,30 @@ export async function performSynchronizedHandoff(
       verifiedAt: createdAt,
       verificationMethod: targetSession.verificationMethod,
     };
+  } else if (
+    options.direction === "codexToCursor" &&
+    conversation.id &&
+    targetSessionId
+  ) {
+    const samePair =
+      binding?.cursorConversationId === targetSessionId &&
+      binding.codexThreadId === conversation.id &&
+      binding.workspaceHash === hashWorkspacePath(options.workspacePath);
+    nextBinding = {
+      cursorConversationId: targetSessionId,
+      codexThreadId: conversation.id,
+      workspaceHash: hashWorkspacePath(options.workspacePath),
+      createdAt: samePair && binding ? binding.createdAt : createdAt,
+      verifiedAt: createdAt,
+      verificationMethod: "active-state",
+    };
   }
   const manifest: HandoffManifest = {
     handoffId,
     direction: options.direction,
-    mode: plan.mode,
+    mode: finalizedMode,
     createdAt,
-    stats: plan.stats,
+    stats: context.metadata.stats ?? plan.stats,
     sourceSessionId: conversation.id,
     targetSessionId,
   };
@@ -207,7 +266,11 @@ export async function performSynchronizedHandoff(
     nextBinding,
     manifest,
   );
-  return { status: "transferred", context, messageCount: plan.messages.length };
+  return {
+    status: "transferred",
+    context,
+    messageCount: context.conversation?.messages.length ?? 0,
+  };
 }
 
 export async function performCursorToCodexHandoff(

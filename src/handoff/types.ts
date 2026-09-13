@@ -32,6 +32,7 @@ export interface RepositoryHandoffPayload {
   diffStat?: string;
   diff?: string;
   diffTruncated?: boolean;
+  diffOmittedReason?: "size-limit" | "token-budget" | "read-error";
 }
 
 export type HandoffMode =
@@ -131,6 +132,7 @@ export interface HandoffPlan {
   nextSyncState: DirectionSyncState;
   stats: HandoffStats;
   continuityReason: string;
+  historyTruncated: boolean;
 }
 
 export interface PlanHandoffOptions {
@@ -149,11 +151,17 @@ export interface PlanHandoffOptions {
 }
 
 export interface CursorConversationSource {
-  getCurrentConversation(workspacePath: string): Promise<Conversation>;
+  getCurrentConversation(
+    workspacePath: string,
+    binding?: SessionBinding,
+  ): Promise<Conversation>;
 }
 
 export interface CodexConversationSource {
-  getCurrentConversation(workspacePath: string): Promise<Conversation>;
+  getCurrentConversation(
+    workspacePath: string,
+    binding?: SessionBinding,
+  ): Promise<Conversation>;
 }
 
 export interface CodexTarget {

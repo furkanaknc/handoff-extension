@@ -10,6 +10,7 @@ import type {
   SessionBinding,
   WorkspaceMemory,
 } from "./types";
+import { WorkspaceOperationQueue } from "./workspaceOperationQueue";
 
 const MAX_RECENT_MANIFESTS = 10;
 
@@ -183,6 +184,8 @@ function parseMemory(raw: string): WorkspaceMemory | undefined {
 }
 
 export class FileSyncStateStore {
+  private readonly mutations = new WorkspaceOperationQueue();
+
   constructor(
     private readonly globalStoragePath: string,
     private readonly onInvalidState: () => void = () => undefined,
@@ -213,24 +216,28 @@ export class FileSyncStateStore {
     sessionBinding?: SessionBinding | null,
     manifest?: HandoffManifest,
   ): Promise<void> {
-    const memory = await this.load(workspacePath);
-    memory[direction] = state;
-    if (sessionBinding === null) {
-      delete memory.sessionBinding;
-    } else if (sessionBinding) {
-      memory.sessionBinding = sessionBinding;
-    }
-    if (manifest) {
-      memory.recentManifests = [manifest, ...(memory.recentManifests ?? [])].slice(
-        0,
-        MAX_RECENT_MANIFESTS,
-      );
-    }
-    await this.atomicWrite(workspacePath, memory);
+    await this.mutations.runExclusive(workspacePath, async () => {
+      const memory = await this.load(workspacePath);
+      memory[direction] = state;
+      if (sessionBinding === null) {
+        delete memory.sessionBinding;
+      } else if (sessionBinding) {
+        memory.sessionBinding = sessionBinding;
+      }
+      if (manifest) {
+        memory.recentManifests = [manifest, ...(memory.recentManifests ?? [])].slice(
+          0,
+          MAX_RECENT_MANIFESTS,
+        );
+      }
+      await this.atomicWrite(workspacePath, memory);
+    });
   }
 
   async reset(workspacePath: string): Promise<void> {
-    await fs.rm(this.filePath(workspacePath), { force: true });
+    await this.mutations.runExclusive(workspacePath, () =>
+      fs.rm(this.filePath(workspacePath), { force: true }),
+    );
   }
 
   pathForTesting(workspacePath: string): string {

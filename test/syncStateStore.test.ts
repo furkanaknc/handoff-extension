@@ -83,3 +83,24 @@ test("atomically commits a session binding with directional state", async (t) =>
   assert.deepEqual(loaded.sessionBinding, binding);
   assert.deepEqual(loaded.cursorToCodex, state);
 });
+
+test("serializes concurrent directional read-modify-write commits", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-memory-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const store = new FileSyncStateStore(directory);
+  const reverseState = {
+    ...state,
+    sourceSessionId: "reverse-source",
+    targetSessionId: "reverse-target",
+    lastHandoffId: "reverse-handoff",
+  };
+
+  await Promise.all([
+    store.commitSuccessfulTransfer("workspace", "cursorToCodex", state),
+    store.commitSuccessfulTransfer("workspace", "codexToCursor", reverseState),
+  ]);
+
+  const loaded = await store.load("workspace");
+  assert.deepEqual(loaded.cursorToCodex, state);
+  assert.deepEqual(loaded.codexToCursor, reverseState);
+});

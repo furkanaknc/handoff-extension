@@ -266,6 +266,7 @@ export function planHandoff(input: PlanHandoffOptions): SyncPlanResult {
       messages: budgetedMessages,
       repository: repositoryPayload,
       continuityReason,
+      historyTruncated: truncated,
       stats,
       nextSyncState: {
         sourceSessionId: sourceSessionId ?? "",

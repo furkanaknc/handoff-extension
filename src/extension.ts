@@ -5,7 +5,11 @@ import { OfficialCodexConversationSource } from "./codex/conversationSource";
 import { CodexThreadTargetResolver } from "./codex/threadTargetResolver";
 import { HookCursorConversationSource } from "./cursor/conversationSource";
 import { OfficialCursorTarget } from "./cursor/cursorTarget";
-import { ensureCursorHookInstalled } from "./cursor/hookInstaller";
+import {
+  checkCursorHookIntegration,
+  ensureCursorHookInstalled,
+  removeCursorHookIntegration,
+} from "./cursor/hookInstaller";
 import { HandoffError } from "./handoff/errors";
 import { getGitContext } from "./handoff/gitContext";
 import {
@@ -16,8 +20,10 @@ import {
 } from "./handoff/orchestrator";
 import { FileSyncStateStore } from "./handoff/syncStateStore";
 import type { HandoffDirection } from "./handoff/types";
+import { handoffWorkspaceOperations } from "./handoff/workspaceOperationQueue";
+import { resolveWorkspaceCandidate } from "./handoff/workspaceResolution";
 
-function activeWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
+function editorWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
   const activeUri = vscode.window.activeTextEditor?.document.uri;
   if (activeUri) {
     const activeFolder = vscode.workspace.getWorkspaceFolder(activeUri);
@@ -25,7 +31,44 @@ function activeWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
       return activeFolder;
     }
   }
-  return vscode.workspace.workspaceFolders?.[0];
+  return undefined;
+}
+
+async function resolveWorkspaceFolder(
+  syncStateStore: FileSyncStateStore,
+  promptWhenAmbiguous = true,
+): Promise<vscode.WorkspaceFolder | undefined> {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  if (folders.length === 0) {
+    return undefined;
+  }
+  const active = editorWorkspaceFolder();
+  const candidates = await Promise.all(
+    folders.map(async (folder) => ({
+      path: folder.uri.fsPath,
+      hasBinding:
+        (await syncStateStore.load(folder.uri.fsPath)).sessionBinding !== undefined,
+    })),
+  );
+  const resolution = resolveWorkspaceCandidate(candidates, active?.uri.fsPath);
+  if (resolution.kind === "selected") {
+    return folders[resolution.index];
+  }
+  if (!promptWhenAmbiguous) {
+    return active;
+  }
+  const picked = await vscode.window.showQuickPick(
+    folders.map((folder) => ({
+      label: folder.name,
+      description: folder.uri.fsPath,
+      folder,
+    })),
+    {
+      title: "Select the workspace for this handoff",
+      placeHolder: "Multiple workspace roots are eligible; choose explicitly",
+    },
+  );
+  return picked?.folder;
 }
 
 function positiveIntegerSetting(name: string, fallback: number): number {
@@ -114,7 +157,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!controlCenterButton) {
       return;
     }
-    const workspaceFolder = activeWorkspaceFolder();
+    const workspaceFolder = await resolveWorkspaceFolder(syncStateStore, false);
     if (!workspaceFolder) {
       controlCenterButton.text = "$(warning) Handoff";
       controlCenterButton.tooltip = "No active workspace; handoff unavailable";
@@ -143,7 +186,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const cursorToCodex = vscode.commands.registerCommand(
     "handoff.cursorToCodex",
     async () => {
-      const workspaceFolder = activeWorkspaceFolder();
+      const workspaceFolder = await resolveWorkspaceFolder(syncStateStore);
       if (!workspaceFolder) {
         await vscode.window.showErrorMessage(
           "No active workspace is open. Open a folder before handing off to Codex.",
@@ -210,7 +253,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const codexToCursor = vscode.commands.registerCommand(
     "handoff.codexToCursor",
     async () => {
-      const workspaceFolder = activeWorkspaceFolder();
+      const workspaceFolder = await resolveWorkspaceFolder(syncStateStore);
       if (!workspaceFolder) {
         await vscode.window.showErrorMessage(
           "No active workspace is open. Open a folder before handing off to Cursor.",
@@ -269,7 +312,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const previewHandoff = async (direction: HandoffDirection): Promise<void> => {
-    const workspaceFolder = activeWorkspaceFolder();
+    const workspaceFolder = await resolveWorkspaceFolder(syncStateStore);
     if (!workspaceFolder) {
       await vscode.window.showErrorMessage(
         "No active workspace is open. Open a folder before previewing a handoff.",
@@ -376,7 +419,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const resetSyncState = vscode.commands.registerCommand(
     "handoff.resetSyncState",
     async () => {
-      const workspaceFolder = activeWorkspaceFolder();
+      const workspaceFolder = await resolveWorkspaceFolder(syncStateStore);
       if (!workspaceFolder) {
         await vscode.window.showErrorMessage(
           "No active workspace is open. Open a folder before resetting handoff sync state.",
@@ -391,7 +434,10 @@ export function activate(context: vscode.ExtensionContext): void {
       if (confirmation !== "Reset") {
         return;
       }
-      await syncStateStore.reset(workspaceFolder.uri.fsPath);
+      await handoffWorkspaceOperations.runExclusive(
+        workspaceFolder.uri.fsPath,
+        () => syncStateStore.reset(workspaceFolder.uri.fsPath),
+      );
       await refreshBindingStatus();
       await vscode.window.showInformationMessage(
         "Handoff sync state was reset. The next transfer in each direction will be bootstrap.",
@@ -402,7 +448,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const showDiagnostics = vscode.commands.registerCommand(
     "handoff.showSyncDiagnostics",
     async () => {
-      const workspaceFolder = activeWorkspaceFolder();
+      const workspaceFolder = await resolveWorkspaceFolder(syncStateStore);
       if (!workspaceFolder) {
         await vscode.window.showErrorMessage(
           "No active workspace is open. Open a folder before showing handoff diagnostics.",
@@ -454,6 +500,9 @@ export function activate(context: vscode.ExtensionContext): void {
           diagnostics.appendLine(
             `  ${manifest.createdAt} ${manifest.direction} ${manifest.mode} ${manifest.stats.outgoingEstimatedTokens} tokens`,
           );
+          diagnostics.appendLine(
+            `    Reason: ${manifest.stats.continuityReason ?? "unknown"}`,
+          );
         }
       }
       diagnostics.show(true);
@@ -463,7 +512,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const openControlCenter = vscode.commands.registerCommand(
     "handoff.openControlCenter",
     async () => {
-      const workspaceFolder = activeWorkspaceFolder();
+      const workspaceFolder = await resolveWorkspaceFolder(syncStateStore);
       if (!workspaceFolder) {
         await vscode.window.showErrorMessage(
           "No active workspace is open. Open a folder before using Handoff.",
@@ -545,6 +594,62 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   );
 
+  const checkIntegration = vscode.commands.registerCommand(
+    "handoff.checkIntegration",
+    async () => {
+      try {
+        const status = await checkCursorHookIntegration(context);
+        const message =
+          status === "ready"
+            ? "Handoff integration is ready."
+            : status === "repair-needed"
+              ? "Handoff integration was found but needs repair. Run Handoff: Repair Integration."
+              : "Handoff integration is not installed. Run Handoff: Repair Integration.";
+        await vscode.window.showInformationMessage(message);
+      } catch (error) {
+        await vscode.window.showErrorMessage(userFacingError(error));
+      }
+    },
+  );
+
+  const repairIntegration = vscode.commands.registerCommand(
+    "handoff.repairIntegration",
+    async () => {
+      try {
+        const result = await ensureCursorHookInstalled(context);
+        if (result !== "cancelled") {
+          await vscode.window.showInformationMessage("Handoff integration is ready.");
+        }
+      } catch (error) {
+        await vscode.window.showErrorMessage(userFacingError(error));
+      }
+    },
+  );
+
+  const removeIntegration = vscode.commands.registerCommand(
+    "handoff.removeIntegration",
+    async () => {
+      const confirmation = await vscode.window.showWarningMessage(
+        "Remove Handoff-owned Cursor hooks? Other Cursor hooks will be preserved.",
+        { modal: true },
+        "Remove Hooks",
+      );
+      if (confirmation !== "Remove Hooks") {
+        return;
+      }
+      try {
+        const removed = await removeCursorHookIntegration(context);
+        await vscode.window.showInformationMessage(
+          removed
+            ? "Handoff-owned Cursor hooks were removed. A backup of hooks.json was created."
+            : "No Handoff-owned Cursor hooks were installed.",
+        );
+      } catch (error) {
+        await vscode.window.showErrorMessage(userFacingError(error));
+      }
+    },
+  );
+
   const previewCursorToCodex = vscode.commands.registerCommand(
     "handoff.previewCursorToCodex",
     () => previewHandoff("cursorToCodex"),
@@ -571,6 +676,9 @@ export function activate(context: vscode.ExtensionContext): void {
     resetSyncState,
     showDiagnostics,
     openControlCenter,
+    checkIntegration,
+    repairIntegration,
+    removeIntegration,
     diagnostics,
     controlCenterButton,
     vscode.window.onDidChangeActiveTextEditor(() => {

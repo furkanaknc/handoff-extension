@@ -127,36 +127,58 @@ test("auto-selects a bound thread without opening the picker", async () => {
   });
 });
 
-test("falls back to the picker when the bound workspace hash does not match", async () => {
+test("fails safely when the bound workspace hash does not match", async () => {
   let pickCount = 0;
-  await resolveCodexTargetSession(
-    "C:\\work",
-    { ...binding, workspaceHash: hashWorkspacePath("C:\\other") },
-    dependencies({
-      async pickThread() {
-        pickCount += 1;
-        return { kind: "existing", thread: { id: "X1", cwd: "C:\\work" } };
-      },
-    }),
-    { preference: "bound" },
+  await assert.rejects(
+    resolveCodexTargetSession(
+      "C:\\work",
+      { ...binding, workspaceHash: hashWorkspacePath("C:\\other") },
+      dependencies({
+        async pickThread() {
+          pickCount += 1;
+          return { kind: "existing", thread: { id: "X1", cwd: "C:\\work" } };
+        },
+      }),
+      { preference: "bound" },
+    ),
+    /previously bound Codex thread is unavailable/,
   );
-  assert.equal(pickCount, 1);
+  assert.equal(pickCount, 0);
 });
 
-test("falls back to the picker when the bound thread cannot be read", async () => {
+test("fails safely when the bound thread cannot be read", async () => {
   let pickCount = 0;
-  await resolveCodexTargetSession(
-    "C:\\work",
-    { ...binding, codexThreadId: "missing" },
-    dependencies({
-      async pickThread() {
-        pickCount += 1;
-        return { kind: "existing", thread: { id: "X1", cwd: "C:\\work" } };
-      },
-    }),
-    { preference: "bound" },
+  await assert.rejects(
+    resolveCodexTargetSession(
+      "C:\\work",
+      { ...binding, codexThreadId: "missing" },
+      dependencies({
+        async pickThread() {
+          pickCount += 1;
+          return { kind: "existing", thread: { id: "X1", cwd: "C:\\work" } };
+        },
+      }),
+      { preference: "bound" },
+    ),
+    /previously bound Codex thread is unavailable/,
   );
-  assert.equal(pickCount, 1);
+  assert.equal(pickCount, 0);
+});
+
+test("fails safely when routing for an existing binding is unverified", async () => {
+  await assert.rejects(
+    resolveCodexTargetSession(
+      "C:\\work",
+      binding,
+      dependencies({
+        async resolveInstallation() {
+          return { version: "99.0.0", executablePath: "codex.exe" };
+        },
+      }),
+      { preference: "bound", routingTrust: "never" },
+    ),
+    /cannot be verified/,
+  );
 });
 
 test("probes routing capability for unknown Codex versions", async () => {
