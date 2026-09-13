@@ -12,6 +12,7 @@ import {
   hasCurrentHandoffHooks,
   HOOK_MARKER,
   mergeHandoffHooks,
+  removeHandoffHooks,
 } from "../src/cursor/hookConfig";
 import { pointerFileName } from "../src/cursor/pointer";
 import { normalizeWorkspacePath } from "../src/cursor/pointer";
@@ -54,6 +55,24 @@ test("replaces stale handoff entries instead of duplicating them", () => {
   const hooks = merged.hooks as Record<string, Array<{ command: string }>>;
   assert.deepEqual(hooks.beforeSubmitPrompt, [{ command, timeout: 5 }]);
   assert.deepEqual(hooks.afterAgentResponse, [{ command, timeout: 5 }]);
+});
+
+test("removes only owned handoff hook entries", () => {
+  const cleaned = removeHandoffHooks({
+    version: 1,
+    hooks: {
+      beforeSubmitPrompt: [
+        { command: "existing.exe" },
+        { command: `node hook.js ${HOOK_MARKER}` },
+      ],
+      afterAgentResponse: [{ command: `node hook.js ${HOOK_MARKER}` }],
+      afterFileEdit: [{ command: "formatter.exe" }],
+    },
+  });
+  assert.deepEqual(cleaned.hooks, {
+    beforeSubmitPrompt: [{ command: "existing.exe" }],
+    afterFileEdit: [{ command: "formatter.exe" }],
+  });
 });
 
 test("hook writes a workspace-specific pointer without transcript content", async (t) => {

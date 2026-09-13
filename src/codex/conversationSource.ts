@@ -1,6 +1,11 @@
 import * as vscode from "vscode";
 import { HandoffError } from "../handoff/errors";
-import type { CodexConversationSource, Conversation } from "../handoff/types";
+import type {
+  CodexConversationSource,
+  Conversation,
+  SessionBinding,
+} from "../handoff/types";
+import { hashWorkspacePath } from "../handoff/syncStateStore";
 import { CodexAppServerClient } from "./appServerClient";
 import { resolveCodexExecutable } from "./codexInstallation";
 import {
@@ -49,7 +54,10 @@ export class OfficialCodexConversationSource
     private readonly parserOptions: CodexParserOptions = {},
   ) {}
 
-  async getCurrentConversation(workspacePath: string): Promise<Conversation> {
+  async getCurrentConversation(
+    workspacePath: string,
+    binding?: SessionBinding,
+  ): Promise<Conversation> {
     const extension = vscode.extensions.getExtension(CODEX_EXTENSION_ID);
     if (!extension) {
       throw new HandoffError(
@@ -79,7 +87,7 @@ export class OfficialCodexConversationSource
       });
       const candidates = matchingCodexThreads(result?.data, workspacePath);
 
-      if (candidates.length === 0) {
+      if (candidates.length === 0 && !binding) {
         throw new HandoffError(
           "CODEX_THREAD_NOT_FOUND",
           "No Codex thread was found for the active workspace.",
@@ -87,7 +95,17 @@ export class OfficialCodexConversationSource
       }
 
       let selected = candidates[0];
-      if (candidates.length > 1) {
+      if (binding) {
+        if (binding.workspaceHash !== hashWorkspacePath(workspacePath)) {
+          throw new HandoffError(
+            "BOUND_TARGET_UNAVAILABLE",
+            "The stored Cursor/Codex binding belongs to another workspace. Select the correct workspace or reset the binding.",
+          );
+        }
+        selected =
+          candidates.find((candidate) => candidate.id === binding.codexThreadId) ??
+          { id: binding.codexThreadId };
+      } else if (candidates.length > 1) {
         const picked = await vscode.window.showQuickPick(
           candidates.map((thread) => ({
             label: threadTitle(thread),
@@ -112,6 +130,17 @@ export class OfficialCodexConversationSource
         threadId: selected.id,
         includeTurns: true,
       });
+      if (
+        binding &&
+        (read?.thread === null ||
+          typeof read?.thread !== "object" ||
+          (read.thread as { id?: unknown }).id !== binding.codexThreadId)
+      ) {
+        throw new HandoffError(
+          "BOUND_TARGET_UNAVAILABLE",
+          "The previously bound Codex thread is unavailable. Rebind explicitly instead of reading another thread.",
+        );
+      }
       if (codexThreadHasActiveTurn(read?.thread)) {
         throw new HandoffError(
           "CODEX_THREAD_BUSY",

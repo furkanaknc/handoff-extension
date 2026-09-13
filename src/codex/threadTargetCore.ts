@@ -244,6 +244,12 @@ export async function resolveCodexTargetSession(
 
   const installation = await dependencies.resolveInstallation();
   if (!installation) {
+    if (preference === "bound" && binding) {
+      throw new HandoffError(
+        "BOUND_TARGET_UNAVAILABLE",
+        "The bound Codex thread cannot be verified because the Codex integration is unavailable. Repair the integration or explicitly start a new target.",
+      );
+    }
     return undefined;
   }
 
@@ -254,6 +260,12 @@ export async function resolveCodexTargetSession(
     dependencies,
   );
   if (!verified) {
+    if (preference === "bound" && binding) {
+      throw new HandoffError(
+        "BOUND_TARGET_UNAVAILABLE",
+        `The bound Codex thread cannot be verified with Codex ${installation.version}. Change the target explicitly or repair deterministic routing before retrying.`,
+      );
+    }
     await dependencies.warn(
       `Codex ${installation.version} has not been verified for deterministic thread routing. This handoff will remain bootstrap and will use the active Codex composer.`,
     );
@@ -288,6 +300,10 @@ export async function resolveCodexTargetSession(
       if (boundSession) {
         return boundSession;
       }
+      throw new HandoffError(
+        "BOUND_TARGET_UNAVAILABLE",
+        "The previously bound Codex thread is unavailable or belongs to another workspace. Rebind explicitly instead of routing this handoff to another thread.",
+      );
     }
 
     if (candidates.length === 0 && preference === "bound") {

@@ -7,12 +7,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/handoff-ext/cursor-codex-handoff.git"
+    "url": "https://github.com/furkanaknc/handoff-extension.git"
   },
   "bugs": {
-    "url": "https://github.com/handoff-ext/cursor-codex-handoff/issues"
+    "url": "https://github.com/furkanaknc/handoff-extension/issues"
   },
-  "homepage": "https://github.com/handoff-ext/cursor-codex-handoff#readme",
+  "homepage": "https://github.com/furkanaknc/handoff-extension#readme",
   "keywords": [
     "cursor",
     "codex",
@@ -37,7 +37,10 @@
     "onCommand:handoff.previewCodexToCursor",
     "onCommand:handoff.resetSyncState",
     "onCommand:handoff.showSyncDiagnostics",
-    "onCommand:handoff.openControlCenter"
+    "onCommand:handoff.openControlCenter",
+    "onCommand:handoff.checkIntegration",
+    "onCommand:handoff.repairIntegration",
+    "onCommand:handoff.removeIntegration"
   ],
   "main": "./dist/src/extension.js",
   "contributes": {
@@ -69,6 +72,18 @@
       {
         "command": "handoff.openControlCenter",
         "title": "Handoff: Open Control Center"
+      },
+      {
+        "command": "handoff.checkIntegration",
+        "title": "Handoff: Check Integration"
+      },
+      {
+        "command": "handoff.repairIntegration",
+        "title": "Handoff: Repair Integration"
+      },
+      {
+        "command": "handoff.removeIntegration",
+        "title": "Handoff: Remove Integration / Hooks"
       }
     ],
     "keybindings": [
@@ -166,7 +181,7 @@
     "compile": "tsc -p tsconfig.json",
     "watch": "tsc -w -p tsconfig.json",
     "test": "npm run compile && node --test \"dist/test/*.test.js\"",
-    "package:local": "npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository -o cursor-codex-handoff-latest.vsix",
+    "package:local": "npx --yes @vscode/vsce package --no-dependencies -o cursor-codex-handoff-latest.vsix",
     "install:local": "npm run package:local && cursor --install-extension .\\cursor-codex-handoff-latest.vsix --force"
   },
   "devDependencies": {
