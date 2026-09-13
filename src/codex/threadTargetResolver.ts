@@ -13,6 +13,7 @@ import {
   resolveCodexTargetSession,
   type CodexInstallation,
   type CodexRoutingTrust,
+  type CodexTargetPreference,
   type ThreadPickResult,
   type ThreadTargetCoreDependencies,
 } from "./threadTargetCore";
@@ -21,6 +22,7 @@ const CODEX_EXTENSION_ID = "openai.chatgpt";
 const NEW_CHAT_COMMAND = "chatgpt.newChat";
 const OPEN_SIDEBAR_COMMAND = "chatgpt.openSidebar";
 const ATTACH_ACTION = "Attach handoff";
+const HANDOFF_EXTENSION_ID = "handoff-ext.cursor-codex-handoff";
 
 function updatedDescription(thread: SelectableCodexThread): string | undefined {
   return typeof thread.updatedAt === "number"
@@ -41,6 +43,11 @@ async function defaultInstallation(): Promise<CodexInstallation | undefined> {
   return { version: extension.packageJSON.version as string, executablePath };
 }
 
+function handoffExtensionVersion(): string {
+  const extension = vscode.extensions.getExtension(HANDOFF_EXTENSION_ID);
+  return (extension?.packageJSON.version as string | undefined) ?? "0.1.1";
+}
+
 function readRoutingTrust(): CodexRoutingTrust {
   const configured = vscode.workspace
     .getConfiguration("handoff")
@@ -51,9 +58,36 @@ function readRoutingTrust(): CodexRoutingTrust {
   return "auto";
 }
 
+function readCodexTargetPreference(): CodexTargetPreference {
+  const configured = vscode.workspace
+    .getConfiguration("handoff")
+    .get<string>("codexTarget", "bound");
+  if (
+    configured === "bound" ||
+    configured === "new" ||
+    configured === "active" ||
+    configured === "ask"
+  ) {
+    return configured;
+  }
+  return "bound";
+}
+
+function readSkipAttachmentConfirmation(): boolean {
+  return vscode.workspace
+    .getConfiguration("handoff")
+    .get<boolean>("skipAttachmentConfirmation", false);
+}
+
 const defaultDependencies: ThreadTargetCoreDependencies = {
   resolveInstallation: defaultInstallation,
-  createClient: (executablePath) => new CodexAppServerClient(executablePath),
+  createClient: (executablePath) =>
+    new CodexAppServerClient(
+      executablePath,
+      ["app-server"],
+      15_000,
+      handoffExtensionVersion(),
+    ),
   async pickThread(threads, binding) {
     type ThreadPickItem = vscode.QuickPickItem & {
       pick: ThreadPickResult;
@@ -131,11 +165,18 @@ export class CodexThreadTargetResolver {
       workspacePath,
       binding,
       this.dependencies,
-      readRoutingTrust(),
+      {
+        routingTrust: readRoutingTrust(),
+        preference: readCodexTargetPreference(),
+      },
     );
   }
 
   prepareTargetSession(session: ResolvedTargetSession): Promise<void> {
-    return prepareCodexTargetSession(session, this.dependencies);
+    return prepareCodexTargetSession(
+      session,
+      this.dependencies,
+      readSkipAttachmentConfirmation(),
+    );
   }
 }

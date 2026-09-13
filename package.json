@@ -2,7 +2,7 @@
   "name": "cursor-codex-handoff",
   "displayName": "Cursor Codex Handoff",
   "description": "Transfer conversation and repository context between Cursor Agent and the official Codex extension with bounded, deterministic handoffs.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "handoff-ext",
   "license": "MIT",
   "repository": {
@@ -71,9 +71,37 @@
         "title": "Handoff: Open Control Center"
       }
     ],
+    "keybindings": [
+      {
+        "command": "handoff.cursorToCodex",
+        "key": "ctrl+shift+h",
+        "mac": "cmd+shift+h"
+      }
+    ],
     "configuration": {
       "title": "Cursor Codex Handoff",
       "properties": {
+        "handoff.codexTarget": {
+          "type": "string",
+          "enum": [
+            "bound",
+            "new",
+            "active",
+            "ask"
+          ],
+          "default": "bound",
+          "description": "How to choose the Codex thread for Cursor → Codex handoffs. bound: reuse verified session binding; new: start a fresh thread; active: attach to the active Codex composer; ask: always show the thread picker."
+        },
+        "handoff.skipAttachmentConfirmation": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip the Verify thread, then Attach handoff confirmation dialog after opening the Codex target."
+        },
+        "handoff.autoInstallHook": {
+          "type": "boolean",
+          "default": true,
+          "description": "Attempt to install the Cursor conversation hook when the extension activates."
+        },
         "handoff.maxHandoffTokens": {
           "type": "number",
           "default": 6000,

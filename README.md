@@ -8,7 +8,7 @@ install a separate Codex CLI.
 ## Commands
 
 ```text
-Handoff: Cursor → Codex
+Handoff: Cursor → Codex          Ctrl+Shift+H / Cmd+Shift+H
 Handoff: Codex → Cursor
 Handoff: Preview Cursor → Codex
 Handoff: Preview Codex → Cursor
@@ -41,9 +41,9 @@ Sync metadata is stored in extension global storage, never in the repository.
 Delta sync uses source checkpoints based on recent message anchors, so sliding
 parser windows do not force unnecessary bootstrap handoffs.
 
-Repository context defaults to branch, HEAD, changed files, and diff stat.
-Full diffs are omitted unless `handoff.includeFullDiff` is enabled because both
-agents usually share the same workspace.
+Repository context in exported handoff Markdown defaults to **branch and HEAD**
+only. Changed-files lists and diff stats are used internally for sync planning
+but are not included in the model-facing export unless you enable a full diff.
 
 ## Development
 
@@ -53,12 +53,16 @@ npm test
 npm run install:local
 ```
 
-Run `Developer: Reload Window` after installation.
+Run **Developer: Reload Window** after installing or updating the VSIX.
+Cursor hook config reloads automatically when `hooks.json` is written.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 ## Settings
 
+- `handoff.codexTarget`: `bound` | `new` | `active` | `ask`, default `bound`
+- `handoff.skipAttachmentConfirmation`: default `false`
+- `handoff.autoInstallHook`: default `true`
 - `handoff.maxHandoffTokens`: default `6000`
 - `handoff.maxConversationTokens`: default `4500`
 - `handoff.includeFullDiff`: default `false`
@@ -69,13 +73,30 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 - `handoff.maxConversationMessages`: deprecated hard cap
 - `handoff.maxConversationCharacters`: deprecated hard cap
 
-## Current boundaries
+## Known limitations
 
-- Cross-platform Codex app-server discovery is supported when the official
-  extension ships a matching bundled binary
-- Codex routing verification uses capability probing with optional trust overrides
-- No automatic model submission
-- No keyboard shortcut
+### Cursor hook
+
+- First use installs a local hook in `~/.cursor/hooks.json` (with backup).
+- Cursor reloads hook config on save; a full window reload is only needed after installing or updating the VSIX.
+- The hook captures conversation ID and transcript path only after you send **at least one** Cursor Agent message in the workspace.
+
+### Codex thread routing
+
+- Deterministic thread routing depends on the official Codex extension and its bundled app-server binary.
+- Unknown Codex versions are probed at runtime; verified versions are allowlisted in the extension.
+- `thread/start` is an experimental app-server method. When it fails, handoff falls back to `chatgpt.newChat` without a thread ID, so the first transfer stays bootstrap-only until you pick or bind a thread manually.
+
+### Manual submit
+
+- Handoff attaches a Markdown file to the target composer via `chatgpt.addFileToThread` (Codex) or Cursor's attachment command.
+- There is no public `chatgpt.submit` or Cursor composer submit API. You still press Enter to send the attached context.
+
+### Session binding
+
+- With `handoff.codexTarget: bound` (default), repeat handoffs reuse the stored Cursor conversation ↔ Codex thread pair when `thread/read` confirms the thread still exists.
+- Threads created via app-server may not appear immediately in `thread/list`; bound selection uses `thread/read` as a fallback.
+- Reset binding via **Handoff: Reset Sync State** or the Control Center.
 
 ## Implementation note
 
