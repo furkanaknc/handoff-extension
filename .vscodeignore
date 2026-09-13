@@ -6,4 +6,8 @@ node_modules/**
 tsconfig.json
 plan*.md
 findings.md
+review.md
+.github/**
+.gitignore
+*.vsix
 package-lock.json
