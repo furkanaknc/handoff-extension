@@ -99,7 +99,9 @@ export function renderHandoffMarkdown(context: HandoffContext): string {
       }
       if (repository.diffTruncated) {
         lines.push(
-          "> Full Git diff omitted because it exceeded the configured size limit or could not be read safely.",
+          repository.diffOmittedReason === "token-budget"
+            ? "> Full Git diff omitted because it exceeded the handoff token budget. Inspect the shared working tree directly."
+            : "> Full Git diff omitted because it exceeded the configured size limit or could not be read safely.",
           "",
         );
       } else if (repository.diff) {

@@ -110,6 +110,7 @@ test("uses delta when source checkpoint anchors match", () => {
     assert.equal(result.plan.mode, "delta");
     assert.deepEqual(result.plan.messages, [{ role: "assistant", content: "D" }]);
     assert.equal(result.plan.repository, undefined);
+    assert.equal(result.plan.historyTruncated, false);
   }
 });
 
@@ -180,5 +181,18 @@ test("never exceeds the configured handoff token budget", () => {
   assert.equal(result.status, "handoff");
   if (result.status === "handoff") {
     assert.ok(result.plan.stats.outgoingEstimatedTokens <= 6000);
+  }
+});
+
+test("marks bounded recovery history as truncated", () => {
+  const result = run(
+    [{ role: "assistant", content: "x".repeat(100_000) }],
+    previous([{ role: "user", content: "missing anchor" }]),
+    { maxConversationTokens: 500 },
+  );
+  assert.equal(result.status, "handoff");
+  if (result.status === "handoff") {
+    assert.equal(result.plan.mode, "recovery");
+    assert.equal(result.plan.historyTruncated, true);
   }
 });

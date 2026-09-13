@@ -38,9 +38,9 @@ async function runGitWithRetry(
 async function hashGitOutput(
   workspacePath: string,
   args: string[],
-  maxBytes: number,
+  captureLimit: number | undefined,
 ): Promise<{ diffHash?: string; diff?: string; diffTruncated: boolean }> {
-  if (maxBytes <= 0) {
+  if (captureLimit !== undefined && captureLimit <= 0) {
     return { diffTruncated: true };
   }
 
@@ -51,7 +51,8 @@ async function hashGitOutput(
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const chunks: Buffer[] = [];
+    const chunks: Buffer[] | undefined =
+      captureLimit === undefined ? undefined : [];
     const errors: Buffer[] = [];
     let byteLength = 0;
     let truncated = false;
@@ -71,11 +72,11 @@ async function hashGitOutput(
 
     child.stdout.on("data", (chunk: Buffer) => {
       hash.update(chunk);
-      if (truncated) {
+      if (!chunks || truncated) {
         return;
       }
       byteLength += chunk.length;
-      if (byteLength > maxBytes) {
+      if (byteLength > captureLimit!) {
         truncated = true;
         chunks.length = 0;
         return;
@@ -100,7 +101,9 @@ async function hashGitOutput(
         finish(() =>
           resolve({
             diffHash,
-            diff: Buffer.concat(chunks).toString("utf8").trimEnd() || undefined,
+            diff: chunks
+              ? Buffer.concat(chunks).toString("utf8").trimEnd() || undefined
+              : undefined,
             diffTruncated: false,
           }),
         );
@@ -164,7 +167,7 @@ export async function getGitContext(
     const result = await hashGitOutput(
       workspacePath,
       ["diff", "HEAD", "--no-ext-diff", "--unified=3", "--"],
-      includeFullDiff ? maxDiffBytes : Number.MAX_SAFE_INTEGER,
+      includeFullDiff ? maxDiffBytes : undefined,
     );
     diffHash = result.diffHash;
     diffTruncated = result.diffTruncated;

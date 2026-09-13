@@ -231,6 +231,7 @@ test("creates a binding after bootstrap and uses delta only for the verified sam
   const store = memoryStore();
   let messages: HandoffMessage[] = [{ role: "user", content: "A" }];
   const modes: Array<string | undefined> = [];
+  const truncations: boolean[] = [];
   const options = {
     workspacePath: "workspace",
     direction: "cursorToCodex" as const,
@@ -243,6 +244,7 @@ test("creates a binding after bootstrap and uses delta only for the verified sam
     target: {
       async sendHandoff(context: HandoffContext) {
         modes.push(context.metadata.mode);
+        truncations.push(context.conversation?.truncated ?? false);
         return true;
       },
     },
@@ -263,6 +265,7 @@ test("creates a binding after bootstrap and uses delta only for the verified sam
   messages = [...messages, { role: "assistant", content: "B" }];
   await performSynchronizedHandoff(options);
   assert.deepEqual(modes, ["bootstrap", "delta"]);
+  assert.deepEqual(truncations, [false, false]);
 });
 
 test("preview mode does not call the target or advance sync state", async () => {
@@ -365,4 +368,112 @@ test("does not persist a new binding when Cursor to Codex attachment fails", asy
   );
   assert.equal(store.saves, 0);
   assert.equal(store.memory.sessionBinding, undefined);
+});
+
+test("serializes same-workspace handoffs before planning to prevent duplicate sends", async () => {
+  const store = memoryStore();
+  let releaseFirst!: () => void;
+  let markFirstEntered!: () => void;
+  const firstEntered = new Promise<void>((resolve) => {
+    markFirstEntered = resolve;
+  });
+  const firstCanFinish = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let sends = 0;
+  const options = {
+    workspacePath: "serialized-workspace",
+    direction: "codexToCursor" as const,
+    sourceKind: "codex" as const,
+    source: {
+      async getCurrentConversation() {
+        return {
+          id: "thread",
+          truncated: false,
+          messages: [{ role: "user" as const, content: "A" }],
+        };
+      },
+    },
+    target: {
+      async sendHandoff() {
+        sends += 1;
+        if (sends === 1) {
+          markFirstEntered();
+          await firstCanFinish;
+        }
+        return true;
+      },
+    },
+    getRepositoryContext: async () => ({ changedFiles: [], diffTruncated: false }),
+    syncStateStore: store,
+    runtime,
+    getTargetSessionId: async () => "composer",
+  };
+
+  const first = performSynchronizedHandoff(options);
+  await firstEntered;
+  const second = performSynchronizedHandoff(options);
+  releaseFirst();
+
+  assert.equal((await first).status, "transferred");
+  assert.equal((await second).status, "already-synchronized");
+  assert.equal(sends, 1);
+});
+
+test("commits repository-only changes without resending conversation or losing binding", async () => {
+  const store = memoryStore();
+  let repositoryHash = "first";
+  const contexts: HandoffContext[] = [];
+  const options = {
+    workspacePath: "repository-only-workspace",
+    direction: "cursorToCodex" as const,
+    sourceKind: "cursor" as const,
+    source: {
+      async getCurrentConversation() {
+        return {
+          id: "C1",
+          truncated: false,
+          messages: [{ role: "user" as const, content: "A" }],
+        };
+      },
+    },
+    target: {
+      async sendHandoff(context: HandoffContext) {
+        contexts.push(context);
+        return true;
+      },
+    },
+    getRepositoryContext: async () => ({
+      head: "abc",
+      branch: "main",
+      changedFiles: ["src/file.ts"],
+      diffHash: repositoryHash,
+      diff: "should stay hidden by default",
+      diffTruncated: false,
+    }),
+    syncStateStore: store,
+    runtime,
+    resolveTargetSession: async () => ({
+      id: "X1",
+      label: "Thread X1",
+      verificationMethod: "active-state" as const,
+    }),
+  };
+
+  await performSynchronizedHandoff(options);
+  const binding = store.memory.sessionBinding;
+  repositoryHash = "second";
+  const second = await performSynchronizedHandoff(options);
+  const third = await performSynchronizedHandoff(options);
+
+  assert.equal(second.status, "transferred");
+  assert.equal(third.status, "already-synchronized");
+  assert.equal(contexts[1].metadata.mode, "repository-only");
+  assert.deepEqual(contexts[1].conversation?.messages, []);
+  assert.equal(contexts[1].repository?.diff, undefined);
+  assert.equal(store.memory.sessionBinding?.cursorConversationId, binding?.cursorConversationId);
+  assert.equal(store.memory.sessionBinding?.codexThreadId, binding?.codexThreadId);
+  assert.equal(store.memory.sessionBinding?.workspaceHash, binding?.workspaceHash);
+  assert.equal(store.memory.sessionBinding?.createdAt, binding?.createdAt);
+  assert.equal(store.memory.cursorToCodex?.repositoryFingerprint.length, 64);
 });

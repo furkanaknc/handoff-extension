@@ -37,6 +37,17 @@ test("captures branch, changed files, stat, and diff hash without full diff by d
   assert.equal(context.diffTruncated, false);
 });
 
+test("hashes a large diff in hash-only mode without enabling capture", async (t) => {
+  const directory = await createRepository();
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  await fs.writeFile(path.join(directory, "tracked.txt"), "x".repeat(5_000_000), "utf8");
+
+  const context = await getGitContext(directory, 1, false);
+  assert.ok(context.diffHash);
+  assert.equal(context.diff, undefined);
+  assert.equal(context.diffTruncated, false);
+});
+
 test("includes full diff only when requested", async (t) => {
   const directory = await createRepository();
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
