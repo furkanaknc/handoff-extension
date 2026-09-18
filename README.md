@@ -7,8 +7,8 @@ install a separate Codex CLI.
 
 ## Install
 
-1. Download the latest `.vsix` from
-   [GitHub Releases](https://github.com/furkanaknc/handoff-extension/releases).
+1. Download `cursor-codex-handoff-latest.vsix` from the
+   [latest GitHub release](https://github.com/furkanaknc/handoff-extension/releases/latest).
 2. Open Cursor or VS Code.
 3. Run **Extensions: Install from VSIX...** from the Command Palette.
 4. Select the downloaded file, then reload the editor window.
