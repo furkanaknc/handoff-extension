@@ -1,13 +1,12 @@
-name: CI
+name: Release
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
+  release:
+    types:
+      - published
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,3 +21,16 @@ jobs:
         with:
           name: cursor-codex-handoff-vsix
           path: cursor-codex-handoff-latest.vsix
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: cursor-codex-handoff-vsix
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: cursor-codex-handoff-latest.vsix
